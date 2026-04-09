@@ -8,6 +8,11 @@ local env = {
     "lua >= 5.1",
     "lpeg >= 1.1.0-2",
   },
+  test = {
+    dependencies = {
+      "santoku >= 0.0.325-1"
+    }
+  }
 }
 
 env.homepage = "https://github.com/treadwelllane/lua-" .. env.name
