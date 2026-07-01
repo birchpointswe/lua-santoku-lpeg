@@ -10,7 +10,8 @@ local env = {
   },
   test = {
     dependencies = {
-      "santoku >= 0.0.328-1"
+      "santoku >= 0.0.328-1",
+      "santoku-matrix >= 0.0.313-1",
     }
   }
 }

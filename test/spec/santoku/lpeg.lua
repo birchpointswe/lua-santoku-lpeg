@@ -250,3 +250,37 @@ test("transform_inline", function ()
   end)
 
 end)
+
+local ivec = require("santoku.ivec")
+
+test("html_match_tags", function ()
+
+  test("builds span tags with class names", function ()
+    local ids = ivec.create({ 1, 2 })
+    local starts = ivec.create({ 0, 5 })
+    local ends = ivec.create({ 3, 8 })
+    local tags = lp.html_match_tags(ids, starts, ends, { [1] = "PER", [2] = "LOC" }, "ner-")
+    assert(#tags == 2)
+    assert(tags[1].name == "span")
+    assert(tags[1].s == 1 and tags[1].e == 3)
+    assert(tags[1].attrs.class == "ner-PER")
+    assert(tags[2].attrs.class == "ner-LOC")
+  end)
+
+  test("falls back to stringified id when no names", function ()
+    local tags = lp.html_match_tags(ivec.create({ 7 }), ivec.create({ 2 }), ivec.create({ 4 }))
+    assert(tags[1].attrs.class == "7")
+    assert(tags[1].s == 3 and tags[1].e == 4)
+  end)
+
+end)
+
+test("html_spans", function ()
+
+  test("converts extracted tags to a pvec of spans", function ()
+    local _, tags = lp.html_extract('hello <b>John</b> world')
+    local spans = lp.html_spans(tags)
+    assert(spans:size() == 1)
+  end)
+
+end)
