@@ -553,6 +553,33 @@ local function transform_inline(html, transforms)
   return table.concat(parts)
 end
 
+-- RFC-4180-ish CSV parser. Returns an array of records, each an array of
+-- field strings. Handles quoted fields with "" escaping, embedded commas and
+-- newlines, CRLF/LF/CR line endings, a leading UTF-8 BOM, and a trailing
+-- newline. Blank lines are dropped.
+local csv_dq = P("\"")
+local csv_field_q = csv_dq * C(((1 - csv_dq) + (csv_dq * csv_dq)) ^ 0) * csv_dq
+  / function (s) return (s:gsub("\"\"", "\"")) end
+local csv_field_u = C((1 - S(",\r\n")) ^ 0)
+local csv_field = csv_field_q + csv_field_u
+local csv_record = Ct(csv_field * (P(",") * csv_field) ^ 0)
+local csv_nl = P("\r\n") + P("\n") + P("\r")
+local csv_doc = Ct(csv_record * (csv_nl * csv_record) ^ 0) * csv_nl ^ -1
+
+local function csv (str)
+  if str:sub(1, 3) == "\239\187\191" then str = str:sub(4) end
+  local rows = match(csv_doc, str)
+  if not rows then return {} end
+  local out = {}
+  for i = 1, #rows do
+    local r = rows[i]
+    if not (#r == 1 and r[1] == "") then
+      out[#out + 1] = r
+    end
+  end
+  return out
+end
+
 return {
   json_fields = json_fields,
   html_text = html_text,
@@ -564,4 +591,5 @@ return {
   component_parts = component_parts,
   minify_html = minify_html,
   transform_inline = transform_inline,
+  csv = csv,
 }
