@@ -1,6 +1,6 @@
 local env = {
   name = "santoku-lpeg",
-  version = "0.0.3-1",
+  version = "0.0.4-1",
   variable_prefix = "TK_LPEG",
   license = "MIT",
   public = true,
