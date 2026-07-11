@@ -27,6 +27,13 @@ function M.tags (p)
   return core._tags(grammar.compile(p))
 end
 
+-- Build a thread-portable program userdata for native (OMP) consumers. Peek it
+-- with tk_re_prog_peek and run tk_re_match from santoku/re.h. Raises on
+-- match-time / value captures.
+function M.prog (p)
+  return core._prog(grammar.compile(p))
+end
+
 -- Run the state-free matcher from Lua (mirrors the native tk_re_match path):
 -- returns the 0-based end offset and capture count, or nil on no match.
 function M.pmatch (p, s, i)

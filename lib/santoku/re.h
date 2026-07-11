@@ -1,12 +1,12 @@
 /*
-** santoku.re: public C API for state-free (thread-portable) matching over a
-** vendored, re-only lpeg core. Consumers (e.g. lua-santoku-learn's extract
-** driver) build a program once on the main state with tk_re_prog, then match
-** under OMP with per-thread tk_re_scratch_t and tk_re_match.
+** santoku.re: public C API. Consumers include this to run the state-free
+** matcher (santoku/re_match.h) in their own TU under OMP. Compile a re pattern
+** in Lua (santoku.re / santoku.re.core._prog) into a "santoku_re_prog" userdata,
+** peek it with tk_re_prog_peek, then match with per-thread tk_re_scratch_t.
 */
 #ifndef SANTOKU_RE_H
 #define SANTOKU_RE_H
 
-#include "santoku/re/tk_re_types.h"
+#include "santoku/re_match.h"
 
 #endif

@@ -228,53 +228,10 @@ static Capture *vm_findopen (Capture *cap, Index_t currindex) {
 ** Opcode interpreter
 */
 
-/* ==== santoku.re: state-free (NOLUA) matcher additions ==================== */
-
+/* santoku.re: the serial matcher (used by lp_match / p:match). The state-free
+** parallel matcher lives header-only in santoku/re_match.h (consumers run it in
+** their own TU under OMP); it is not generated here. */
 #include <stdlib.h>
-#include "tk_re_types.h"
-
-struct tk_re_prog_s {
-  Instruction *code;       /* owned copy of the compiled program */
-  int codesize;            /* elements */
-  int ntags;
-  char **tagnames;         /* dense tag id -> named-group name (owned) */
-  unsigned short *tagkeys; /* dense tag id -> ktable key (cap projection) */
-};
-
-/* NOLUA counterparts of doublestack/growcap: grow the caller's per-thread
-** scratch with realloc instead of Lua userdata, honoring the backtrack
-** ceiling, and signal failure by return value (no longjmp). */
-static Stack *tk_re_doublestack (tk_re_scratch_t *sc, Stack **stacklimit) {
-  Stack *base = (Stack *)sc->stack;
-  size_t n = sc->stack_cap;        /* full: called when top == limit */
-  size_t newn = n * 2;
-  Stack *ns;
-  if (n >= sc->ceiling) { sc->status = TK_RE_ESTACK; return NULL; }
-  if (newn > sc->ceiling) newn = sc->ceiling;
-  ns = (Stack *)realloc(base, newn * sizeof(Stack));
-  if (ns == NULL) { sc->status = TK_RE_EOOM; return NULL; }
-  sc->stack = ns; sc->stack_cap = newn;
-  *stacklimit = ns + newn;
-  return ns + n;  /* next (empty) slot, at the old full count */
-}
-
-static Capture *tk_re_growcap (tk_re_scratch_t *sc, Capture *capture,
-                               int *capsize, int captop, int n) {
-  Capture *nc;
-  size_t newsize;
-  (void) capture;  /* always == sc->caps */
-  if (*capsize - captop > n) return (Capture *)sc->caps;  /* room */
-  newsize = (size_t)captop + (size_t)n + 1;
-  newsize += newsize / 2;  /* 1.5x */
-  nc = (Capture *)realloc(sc->caps, newsize * sizeof(Capture));
-  if (nc == NULL) { sc->status = TK_RE_ECAPS; return NULL; }
-  sc->caps = nc; sc->caps_cap = newsize; *capsize = (int)newsize;
-  return nc;
-}
-
-/* Emit the interpreter twice: the stock serial 'match' and the state-free
-** 'tk_re_vmmatch'. See lpvm_body.h. */
 #define TK_RE_LUA
 #include "lpvm_body.h"
 #undef TK_RE_LUA
-#include "lpvm_body.h"
