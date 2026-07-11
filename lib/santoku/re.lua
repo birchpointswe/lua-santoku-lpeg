@@ -29,6 +29,13 @@ end
 
 
 
+
+function M.prog (p)
+  return core._prog(grammar.compile(p))
+end
+
+
+
 function M.pmatch (p, s, i)
   return core._pmatch(grammar.compile(p), s, i)
 end

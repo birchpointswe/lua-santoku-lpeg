@@ -14,12 +14,12 @@
 #include "lua.h"
 #include "lauxlib.h"
 
-#include "tk_re_types.h"
+#include "santoku/re_match.h"  /* header-only state-free matcher + prog type */
 
 #include "lpcap_impl.h"    /* lpcap.c  */
 #include "lpcset_impl.h"   /* lpcset.c */
 #include "lpcode_impl.h"   /* lpcode.c */
 #include "lpprint_impl.h"  /* lpprint.c */
-#include "lpvm_impl.h"     /* lpvm.c: helpers + include-twice matchers */
+#include "lpvm_impl.h"     /* lpvm.c: helpers + serial matcher */
 #include "lptree_impl.h"   /* lptree.c: combinators, pattreg, tk_re_open_core */
-#include "tk_re_impl.h"    /* prog/scratch/C-API + luaopen_santoku_re_core */
+#include "tk_re_impl.h"    /* prog build (udata) + _prog/_check/_tags/_pmatch */
