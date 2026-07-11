@@ -230,8 +230,5 @@ static Capture *vm_findopen (Capture *cap, Index_t currindex) {
 
 /* santoku.re: the serial matcher (used by lp_match / p:match). The state-free
 ** parallel matcher lives header-only in santoku/re_match.h (consumers run it in
-** their own TU under OMP); it is not generated here. */
-#include <stdlib.h>
-#define TK_RE_LUA
+** their own TU under OMP). */
 #include "lpvm_body.h"
-#undef TK_RE_LUA
