@@ -1,4 +1,4 @@
-local lpeg = require("lpeg")
+local lpeg = require("santoku.re.core")
 local P, S, R, C, Cc, Cp, Ct, V = lpeg.P, lpeg.S, lpeg.R, lpeg.C, lpeg.Cc, lpeg.Cp, lpeg.Ct, lpeg.V
 local match = lpeg.match
 local wrap, yield = coroutine.wrap, coroutine.yield
