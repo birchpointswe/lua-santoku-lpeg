@@ -116,6 +116,34 @@ lp.transform_inline("<script>var x=1;</script>", { js = string.upper })
 
 Anchors: `test/spec/santoku/lpeg.lua` (`minify_html`, `transform_inline`).
 
+## Scenario: strip comments from source and templates
+
+`require("santoku.lpeg.strip")` returns a comment-stripper for a whole ecosystem. `strip(src, filename)`
+dispatches on the extension: `.lua`, `.c`/`.h`/`.cpp`/`.cc`/`.hpp`/`.m`, `.js`, `.css`,
+`.html`/`.htm`, `.conf` each get their language stripper; `.json` and unknown extensions are
+no-ops. A `.tk.<ext>` template file interleaves output-language literal text with `<% ... %>`
+Lua code blocks: the literal text is stripped with the `<ext>` stripper and each code block's
+Lua is stripped, while the `<%`/`%>` delimiters (matched context-free, exactly like the template
+engine) are preserved.
+
+```lua
+local strip = require("santoku.lpeg.strip")
+local out, bailed = strip.strip("local x = 1 -- note\n", "m.lua")   -- "local x = 1 \n", false
+strip.strip("<% foo() -- done %>", "m.tk.lua")                       -- "<% foo() %>"
+strip.strip("local s = [[ <% f() %> ]]\n", "m.tk.lua")               -- unchanged (long string spans the block)
+```
+
+The individual language strippers are also exported (`strip_lua`, `strip_c`, `strip_js`,
+`strip_css`, `strip_conf`, `strip_html`, `strip_template(src, output_lang)`), each returning
+`out, bailed`. Every result is guaranteed to be a byte-subsequence of the input (only deletions);
+if any ambiguity or safety check trips, the stripper returns the input unchanged with
+`bailed == true`. Language notes: Lua and C preserve strings (short and long / char literals) and
+keep directive comments (`luacheck:`/`luacov:` for Lua; `NOLINT`, `clang-format`, `@ts-`,
+`IWYU pragma:`, `NOSONAR` for C); JS additionally distinguishes regex literals from division and
+preserves backtick template literals; CSS strips only `/* */`; nginx `conf` strips `#` lines.
+
+Anchor: `test/spec/santoku/lpeg/strip.lua`.
+
 ## Gotchas
 
 - `html_extract` positions index the stripped text; `html_tags` positions index the
@@ -125,3 +153,7 @@ Anchors: `test/spec/santoku/lpeg.lua` (`minify_html`, `transform_inline`).
 - `html_spans` needs `santoku.pvec` (lua-santoku-matrix), a test dependency here and not a
   runtime one; a caller that uses it must depend on matrix.
 - `html_match_tags` expects 0-based `:get(i)` vectors and emits 1-based inclusive `s, e`.
+- `strip` output is always a subsequence of the input; on any ambiguity it bails and returns the
+  input unchanged (`bailed == true`), so it can only ever delete comment bytes, never mutate code.
+- `strip` on a `.tk.<ext>` template resolves `<ext>` from the final extension after `.tk.`; a
+  `<%` found while the output-language scanner is inside a comment it would delete forces a bail.

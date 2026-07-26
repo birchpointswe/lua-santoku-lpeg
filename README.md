@@ -45,6 +45,19 @@ behavior; read this for how the functions are used and the conventions.
 
 Worked, per-scenario examples live in [`doc/usage.md`](doc/usage.md).
 
+### Comment stripping (`santoku.lpeg.strip`)
+
+`require("santoku.lpeg.strip")` is a separate module: a subsequence-safe comment stripper for
+Lua, C-family, JS, CSS, HTML, nginx `conf`, and santoku `.tk.<ext>` templates. It never mutates
+code, only deletes comment bytes; on any ambiguity it returns the input unchanged with
+`bailed == true`.
+
+| Function | Role | Anchor test |
+|----------|------|-------------|
+| `strip(src, filename)` | dispatch by extension; `.tk.<ext>` templates strip literal text and `<% %>` Lua while keeping the delimiters | `lpeg/strip.lua` |
+| `strip_lua/strip_c/strip_js/strip_css/strip_conf/strip_html(src)` | per-language strippers, each returns `out, bailed` | `lpeg/strip.lua` |
+| `strip_template(src, output_lang)` | strip a template whose literal output language is `output_lang` | `lpeg/strip.lua` |
+
 ## Snippets
 
 ### Stream named fields out of JSON lines
