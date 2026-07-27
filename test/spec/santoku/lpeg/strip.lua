@@ -16,7 +16,7 @@ test("strip_lua", function ()
   test("removes decorative line comment", function ()
     local out, bailed = strip.strip_lua("local x = 1 -- foo\nreturn x\n")
     assert(not bailed)
-    assert(out == "local x = 1 \nreturn x\n")
+    assert(out == "local x = 1\nreturn x\n")
     assert(is_subseq(out, "local x = 1 -- foo\nreturn x\n"))
   end)
 
@@ -66,13 +66,61 @@ test("strip_lua", function ()
     assert(strip.strip_lua(src) == src)
   end)
 
+  test("leaves no trailing whitespace where comment was", function ()
+    local src = "local x = 1  \t -- foo\n"
+    local out = strip.strip_lua(src)
+    assert(out == "local x = 1\n")
+    assert(is_subseq(out, src))
+  end)
+
+  test("full line comment leaves an empty line", function ()
+    local out = strip.strip_lua("a = 1\n  \t-- foo\nb = 2\n")
+    assert(out == "a = 1\n\nb = 2\n")
+  end)
+
+  test("comment at end of file without newline", function ()
+    assert(strip.strip_lua("a = 1 -- foo") == "a = 1")
+  end)
+
+  test("pre-existing trailing whitespace untouched", function ()
+    local src = "x = 1  \ny = 2\t\n"
+    assert(strip.strip_lua(src) == src)
+  end)
+
+  test("trailing whitespace inside long string preserved", function ()
+    local src = "local s = [[a  \nb  ]] -- c\n"
+    assert(strip.strip_lua(src) == "local s = [[a  \nb  ]]\n")
+  end)
+
+  test("trailing whitespace inside short string preserved", function ()
+    local src = "local s = \"a  \" -- c\n"
+    assert(strip.strip_lua(src) == "local s = \"a  \"\n")
+  end)
+
+  test("inline long comment keeps token separation", function ()
+    assert(strip.strip_lua("local a --[[ c ]] b\n") == "local a  b\n")
+  end)
+
+  test("long comment ending a line trims both sides", function ()
+    assert(strip.strip_lua("local a = 1 --[[ c ]]  \nb\n") == "local a = 1\nb\n")
+  end)
+
+  test("multiline long comment trims what precedes it", function ()
+    assert(strip.strip_lua("a = 1  --[[x\ny]]\n") == "a = 1\n")
+  end)
+
+  test("directive comment keeps its leading whitespace", function ()
+    local src = "local x = 1  -- luacheck: ignore\n"
+    assert(strip.strip_lua(src) == src)
+  end)
+
 end)
 
 test("strip_c", function ()
 
   test("removes line and block comments", function ()
     local out = strip.strip_c("int x; // hi\nint y; /* z */\n")
-    assert(out == "int x; \nint y; \n")
+    assert(out == "int x;\nint y;\n")
   end)
 
   test("markers inside strings preserved", function ()
@@ -87,12 +135,12 @@ test("strip_c", function ()
 
   test("backslash-newline continues line comment", function ()
     local out = strip.strip_c("a // one \\\ntwo\nb\n")
-    assert(out == "a \nb\n")
+    assert(out == "a\nb\n")
   end)
 
   test("block comment spanning lines keeps newlines", function ()
     local out = strip.strip_c("a /* one\ntwo */ b\n")
-    assert(out == "a \n b\n")
+    assert(out == "a\n b\n")
   end)
 
   test("NOLINT preserved", function ()
@@ -103,6 +151,30 @@ test("strip_c", function ()
   test("clang-format preserved", function ()
     local src = "x; /* clang-format off */\n"
     assert(strip.strip_c(src) == src)
+  end)
+
+  test("leaves no trailing whitespace where comment was", function ()
+    local src = "int x;  \t // hi\n"
+    local out = strip.strip_c(src)
+    assert(out == "int x;\n")
+    assert(is_subseq(out, src))
+  end)
+
+  test("indented line comment leaves an empty line", function ()
+    assert(strip.strip_c("a;\n  // c\nb;\n") == "a;\n\nb;\n")
+  end)
+
+  test("indented block comment leaves an empty line", function ()
+    assert(strip.strip_c("a;\n  /* c */  \nb;\n") == "a;\n\nb;\n")
+  end)
+
+  test("inline block comment keeps token separation", function ()
+    assert(strip.strip_c("int a; /* c */ int b;\n") == "int a;  int b;\n")
+  end)
+
+  test("trailing whitespace inside string preserved", function ()
+    local src = "char *s = \"a  \"; // c\n"
+    assert(strip.strip_c(src) == "char *s = \"a  \";\n")
   end)
 
 end)
@@ -121,7 +193,7 @@ test("strip_js", function ()
 
   test("division then line comment", function ()
     local out = strip.strip_js("var x = a / b // c\n")
-    assert(out == "var x = a / b \n")
+    assert(out == "var x = a / b\n")
   end)
 
   test("backtick template preserved", function ()
@@ -149,18 +221,49 @@ test("strip_js", function ()
     assert(strip.strip_js(src) == src)
   end)
 
+  test("leaves no trailing whitespace where comment was", function ()
+    assert(strip.strip_js("var x = 1;  \t // c\n") == "var x = 1;\n")
+  end)
+
+  test("indented comment leaves an empty line", function ()
+    assert(strip.strip_js("a;\n  // c\nb;\n") == "a;\n\nb;\n")
+  end)
+
+  test("trailing whitespace inside template literal preserved", function ()
+    local src = "var t = `a  \nb  `; // c\n"
+    assert(strip.strip_js(src) == "var t = `a  \nb  `;\n")
+  end)
+
+  test("trailing whitespace inside regex preserved", function ()
+    local src = "var r = /a  /; // c\n"
+    assert(strip.strip_js(src) == "var r = /a  /;\n")
+  end)
+
 end)
 
 test("strip_css", function ()
 
   test("removes block comment", function ()
     local out = strip.strip_css(".a { color: red } /* c */\n")
-    assert(out == ".a { color: red } \n")
+    assert(out == ".a { color: red }\n")
   end)
 
   test("comment in string preserved", function ()
     local src = ".a { content: \"/* not a comment */\" }\n"
     assert(strip.strip_css(src) == src)
+  end)
+
+  test("indented comment leaves an empty line", function ()
+    assert(strip.strip_css(".a{}\n  /* c */\n.b{}\n") == ".a{}\n\n.b{}\n")
+  end)
+
+  test("inline comment keeps token separation", function ()
+    assert(strip.strip_css(".a /* c */ .b {}\n") == ".a  .b {}\n")
+  end)
+
+  test("trailing whitespace inside string preserved", function ()
+    local src = ".a { content: \"x  \" } /* c */\n"
+    assert(strip.strip_css(src) == ".a { content: \"x  \" }\n")
   end)
 
 end)
@@ -169,12 +272,21 @@ test("strip_conf", function ()
 
   test("removes hash comment", function ()
     local out = strip.strip_conf("listen 80; # comment\nserver_name x;\n")
-    assert(out == "listen 80; \nserver_name x;\n")
+    assert(out == "listen 80;\nserver_name x;\n")
   end)
 
   test("hash in string preserved", function ()
     local src = "add_header X \"# not a comment\";\n"
     assert(strip.strip_conf(src) == src)
+  end)
+
+  test("indented comment leaves an empty line", function ()
+    assert(strip.strip_conf("a;\n  # c\nb;\n") == "a;\n\nb;\n")
+  end)
+
+  test("trailing whitespace inside string preserved", function ()
+    local src = "add_header X \"a  \"; # c\n"
+    assert(strip.strip_conf(src) == "add_header X \"a  \";\n")
   end)
 
 end)
@@ -191,6 +303,14 @@ test("strip_html", function ()
     assert(out == "<p>x\ny</p>")
   end)
 
+  test("indented comment leaves an empty line", function ()
+    assert(strip.strip_html("<p>x</p>\n  <!-- c -->  \n<p>y</p>") == "<p>x</p>\n\n<p>y</p>")
+  end)
+
+  test("inline comment keeps surrounding text spacing", function ()
+    assert(strip.strip_html("<p>a <!-- c --> b</p>") == "<p>a  b</p>")
+  end)
+
 end)
 
 test("strip_template", function ()
@@ -205,7 +325,7 @@ test("strip_template", function ()
 
   test("lua comment in code stripped but percent-gt survives", function ()
     local out = strip.strip_template("<% foo() -- done %>", "lua")
-    assert(out == "<% foo() %>")
+    assert(out == "<% foo()%>")
   end)
 
   test("multiline long string across code keeps inner dashes", function ()
@@ -217,14 +337,14 @@ test("strip_template", function ()
 
   test("literal lua comment outside code stripped", function ()
     local out = strip.strip_template("a -- gone\n<% z() %>\n", "lua")
-    assert(out == "a \n<% z() %>\n")
+    assert(out == "a\n<% z() %>\n")
   end)
 
   test("c template strips literal and code comments", function ()
     local src = "int x; // gone\n<% foo() -- also gone %>\nchar *s = \"//keep\";\n"
     local out, bailed = strip.strip_template(src, "c")
     assert(not bailed)
-    assert(out == "int x; \n<% foo() %>\nchar *s = \"//keep\";\n")
+    assert(out == "int x;\n<% foo()%>\nchar *s = \"//keep\";\n")
     assert(is_subseq(out, src))
   end)
 
@@ -232,14 +352,14 @@ test("strip_template", function ()
     local src = "<div><!-- gone --><% bar() -- gone %></div>"
     local out, bailed = strip.strip_template(src, "html")
     assert(not bailed)
-    assert(out == "<div><% bar() %></div>")
+    assert(out == "<div><% bar()%></div>")
     assert(is_subseq(out, src))
   end)
 
   test("conf template mostly one code block", function ()
     local src = "<%\n  local x = 1 -- gone\n  return y\n%>\n"
     local out = strip.strip_template(src, "conf")
-    assert(out == "<%\n  local x = 1 \n  return y\n%>\n")
+    assert(out == "<%\n  local x = 1\n  return y\n%>\n")
     assert(is_subseq(out, src))
   end)
 
@@ -254,25 +374,51 @@ test("strip_template", function ()
     assert(out == src)
   end)
 
+  test("literal comment leaves no trailing whitespace", function ()
+    local src = "int x;  // gone\n<% y() %>\n"
+    local out = strip.strip_template(src, "c")
+    assert(out == "int x;\n<% y() %>\n")
+    assert(is_subseq(out, src))
+  end)
+
+  test("indented literal comment leaves an empty line", function ()
+    local out = strip.strip_template("a;\n  // gone\n<% y() %>\n", "c")
+    assert(out == "a;\n\n<% y() %>\n")
+  end)
+
+  test("output long string trailing whitespace preserved across code", function ()
+    local src = "x = [[  \n<% y() %>  \n]] -- gone\n"
+    local out = strip.strip_template(src, "lua")
+    assert(out == "x = [[  \n<% y() %>  \n]]\n")
+    assert(is_subseq(out, src))
+  end)
+
+  test("multiline literal block comment trims what precedes it", function ()
+    local src = "a;  /* one\ntwo */\nb;\n"
+    local out = strip.strip_template(src, "c")
+    assert(out == "a;\n\nb;\n")
+    assert(is_subseq(out, src))
+  end)
+
 end)
 
 test("strip dispatcher", function ()
 
   test("routes lua", function ()
-    assert(strip.strip("x = 1 -- c\n", "foo.lua") == "x = 1 \n")
+    assert(strip.strip("x = 1 -- c\n", "foo.lua") == "x = 1\n")
   end)
 
   test("routes c and h", function ()
-    assert(strip.strip("a; // c\n", "foo.c") == "a; \n")
-    assert(strip.strip("a; // c\n", "foo.h") == "a; \n")
+    assert(strip.strip("a; // c\n", "foo.c") == "a;\n")
+    assert(strip.strip("a; // c\n", "foo.h") == "a;\n")
   end)
 
   test("routes js", function ()
-    assert(strip.strip("a; // c\n", "foo.js") == "a; \n")
+    assert(strip.strip("a; // c\n", "foo.js") == "a;\n")
   end)
 
   test("routes css", function ()
-    assert(strip.strip("a{} /* c */\n", "foo.css") == "a{} \n")
+    assert(strip.strip("a{} /* c */\n", "foo.css") == "a{}\n")
   end)
 
   test("routes html", function ()
@@ -280,7 +426,7 @@ test("strip dispatcher", function ()
   end)
 
   test("routes conf", function ()
-    assert(strip.strip("a; # c\n", "foo.conf") == "a; \n")
+    assert(strip.strip("a; # c\n", "foo.conf") == "a;\n")
   end)
 
   test("json is no-op", function ()
@@ -295,12 +441,12 @@ test("strip dispatcher", function ()
 
   test("tk lua routes to template", function ()
     local src = "local s = [[ <% x() -- c %> ]]\n"
-    assert(strip.strip(src, "foo.tk.lua") == "local s = [[ <% x() %> ]]\n")
+    assert(strip.strip(src, "foo.tk.lua") == "local s = [[ <% x()%> ]]\n")
   end)
 
   test("tk c routes to template with c output", function ()
     local src = "int x; // c\n<% y() %>\n"
-    assert(strip.strip(src, "foo.tk.c") == "int x; \n<% y() %>\n")
+    assert(strip.strip(src, "foo.tk.c") == "int x;\n<% y() %>\n")
   end)
 
   test("tk html routes to template with html output", function ()
@@ -310,11 +456,11 @@ test("strip dispatcher", function ()
 
   test("tk json strips only lua code", function ()
     local src = "{ <% k() -- c %> }"
-    assert(strip.strip(src, "foo.tk.json") == "{ <% k() %> }")
+    assert(strip.strip(src, "foo.tk.json") == "{ <% k()%> }")
   end)
 
   test("path with directories", function ()
-    assert(strip.strip("x -- c\n", "a/b/foo.lua") == "x \n")
+    assert(strip.strip("x -- c\n", "a/b/foo.lua") == "x\n")
   end)
 
 end)

@@ -46,6 +46,42 @@ local function ws_after (src, pos)
   return pos
 end
 
+local function trim_trailing (out)
+  local i = #out
+  while i > 0 do
+    local s = out[i]
+    local j = #s
+    while j > 0 do
+      local b = byte(s, j)
+      if b == 32 or b == 9 then
+        j = j - 1
+      else
+        break
+      end
+    end
+    if j == #s and j > 0 then return end
+    if j > 0 then
+      out[i] = sub(s, 1, j)
+      return
+    end
+    out[i] = nil
+    i = i - 1
+  end
+end
+
+local function after_comment (src, pos, out, multiline)
+  local p = ws_after(src, pos)
+  local b = byte(src, p)
+  if b == nil or b == 10 or b == 13 then
+    trim_trailing(out)
+    return p
+  end
+  if multiline then
+    trim_trailing(out)
+  end
+  return pos
+end
+
 local function long_bracket_open (src, pos)
   if byte(src, pos) ~= 91 then return nil end
   local p = pos + 1
@@ -93,7 +129,8 @@ local function strip_lua (src)
           p = p + 1
         end
         if closed then
-          pos = closed
+          local ml = find(src, "\n", pos, true)
+          pos = after_comment(src, closed, out, ml ~= nil and ml < closed)
         else
           out[#out + 1] = sub(src, pos)
           pos = len + 1
@@ -112,11 +149,7 @@ local function strip_lua (src)
           end
         else
           local nl = find(src, "\n", cs, true)
-          if nl then
-            pos = nl
-          else
-            pos = len + 1
-          end
+          pos = after_comment(src, nl or (len + 1), out, false)
         end
       end
     elseif b == 34 or b == 39 then
@@ -201,8 +234,9 @@ local function strip_c_line (src, pos, len, out)
   end
   if has_directive(src, start + 2, c_directives) then
     out[#out + 1] = sub(src, start, pos - 1)
+    return pos
   end
-  return pos
+  return after_comment(src, pos, out, false)
 end
 
 local function strip_c_block (src, pos, len, out)
@@ -222,12 +256,13 @@ local function strip_c_block (src, pos, len, out)
   end
   if has_directive(src, start + 2, c_directives) then
     out[#out + 1] = sub(src, start, closed - 1)
-  else
-    local inner = sub(src, start, closed - 1)
-    local nl = inner:gsub("[^\n]", "")
-    out[#out + 1] = nl
+    return closed
   end
-  return closed
+  local inner = sub(src, start, closed - 1)
+  local nl = inner:gsub("[^\n]", "")
+  local np = after_comment(src, closed, out, #nl > 0)
+  out[#out + 1] = nl
+  return np
 end
 
 local function copy_c_string (src, pos, len, out, q)
@@ -371,8 +406,9 @@ local function strip_js_line (src, pos, len, out)
   end
   if has_directive(src, start + 2, js_directives) then
     out[#out + 1] = sub(src, start, pos - 1)
+    return pos
   end
-  return pos
+  return after_comment(src, pos, out, false)
 end
 
 local function strip_js_block (src, pos, len, out)
@@ -392,10 +428,12 @@ local function strip_js_block (src, pos, len, out)
   end
   if has_directive(src, start + 2, js_directives) then
     out[#out + 1] = sub(src, start, closed - 1)
-  else
-    out[#out + 1] = (sub(src, start, closed - 1):gsub("[^\n]", ""))
+    return closed
   end
-  return closed
+  local nl = (sub(src, start, closed - 1):gsub("[^\n]", ""))
+  local np = after_comment(src, closed, out, #nl > 0)
+  out[#out + 1] = nl
+  return np
 end
 
 local function strip_js (src)
@@ -465,8 +503,9 @@ local function strip_css (src)
         out[#out + 1] = sub(src, pos)
         pos = len + 1
       else
-        out[#out + 1] = (sub(src, pos, closed - 1):gsub("[^\n]", ""))
-        pos = closed
+        local nl = (sub(src, pos, closed - 1):gsub("[^\n]", ""))
+        pos = after_comment(src, closed, out, #nl > 0)
+        out[#out + 1] = nl
       end
     elseif b == 34 or b == 39 then
       pos = copy_c_string(src, pos, len, out, b)
@@ -488,6 +527,7 @@ local function strip_conf (src)
       while pos <= len and byte(src, pos) ~= 10 do
         pos = pos + 1
       end
+      pos = after_comment(src, pos, out, false)
     elseif b == 34 or b == 39 then
       local q = b
       local start = pos
@@ -534,8 +574,9 @@ local function strip_html (src)
         out[#out + 1] = sub(src, pos)
         pos = len + 1
       else
-        out[#out + 1] = (sub(src, pos, closed - 1):gsub("[^\n]", ""))
-        pos = closed
+        local nl = (sub(src, pos, closed - 1):gsub("[^\n]", ""))
+        pos = after_comment(src, closed, out, #nl > 0)
+        out[#out + 1] = nl
       end
     else
       local next_lt = find(src, "<", pos, true)
@@ -939,7 +980,9 @@ local function strip_template (src, output_lang)
         while pos <= seg_stop do
           local np, emit_end, stripped, nst = step(src, pos, seg_stop, st)
           if stripped then
-            out[#out + 1] = nlonly(sub(src, pos, np - 1))
+            local nl = nlonly(sub(src, pos, np - 1))
+            np = after_comment(src, np, out, #nl > 0)
+            out[#out + 1] = nl
           elseif emit_end >= pos then
             out[#out + 1] = sub(src, pos, emit_end)
           end
