@@ -596,6 +596,7 @@ end
 local ext_map = {
   lua = strip_lua,
   c = strip_c, h = strip_c, cpp = strip_c, cc = strip_c, hpp = strip_c, m = strip_c,
+  java = strip_c,
   js = strip_js,
   css = strip_css,
   html = strip_html, htm = strip_html,
@@ -952,6 +953,7 @@ end
 local steppers = {
   lua = step_lua,
   c = step_c, h = step_c, cpp = step_c, cc = step_c, hpp = step_c, m = step_c,
+  java = step_c,
   js = step_js,
   css = step_css,
   conf = step_conf,
