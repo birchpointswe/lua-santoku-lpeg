@@ -865,6 +865,17 @@ end
 
 local function step_css (src, pos, stop, st)
   if st then
+    if st.kind == "str" then
+      local q = st.q
+      while pos <= stop do
+        local c = byte(src, pos)
+        if c == 92 then pos = pos + 2
+        elseif c == q then return pos + 1, pos, false, nil
+        elseif c == 10 then return pos + 1, pos, false, nil
+        else pos = pos + 1 end
+      end
+      return stop + 1, stop, false, st
+    end
     while pos <= stop do
       if byte(src, pos) == 42 and byte(src, pos + 1) == 47 then
         return pos + 2, pos - 1, true, nil
