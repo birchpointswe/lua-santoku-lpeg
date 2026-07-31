@@ -69,17 +69,39 @@ local function trim_trailing (out)
   end
 end
 
-local function after_comment (src, pos, out, multiline)
+local function lead_blank (src, cstart)
+  local p = cstart - 1
+  while p >= 1 do
+    local b = byte(src, p)
+    if b == 32 or b == 9 then
+      p = p - 1
+    elseif b == 10 then
+      return true
+    else
+      return false
+    end
+  end
+  return true
+end
+
+local function after_comment (src, cstart, pos, out)
   local p = ws_after(src, pos)
   local b = byte(src, p)
-  if b == nil or b == 10 or b == 13 then
-    trim_trailing(out)
+  if not (b == nil or b == 10 or b == 13) then
+    return pos
+  end
+  trim_trailing(out)
+  if not lead_blank(src, cstart) then
     return p
   end
-  if multiline then
-    trim_trailing(out)
+  if b == 13 then
+    p = p + 1
+    b = byte(src, p)
   end
-  return pos
+  if b == 10 then
+    p = p + 1
+  end
+  return p
 end
 
 local function long_bracket_open (src, pos)
@@ -129,8 +151,7 @@ local function strip_lua (src)
           p = p + 1
         end
         if closed then
-          local ml = find(src, "\n", pos, true)
-          pos = after_comment(src, closed, out, ml ~= nil and ml < closed)
+          pos = after_comment(src, pos, closed, out)
         else
           out[#out + 1] = sub(src, pos)
           pos = len + 1
@@ -138,7 +159,7 @@ local function strip_lua (src)
       else
         local txt_start = ws_after(src, cs)
         local rest = sub(src, txt_start)
-        if find(rest, "^luacheck:") or find(rest, "^luacov:") then
+        if find(rest, "^luacheck:") or find(rest, "^luacov:") or find(rest, "^tk:") then
           local nl = find(src, "\n", pos, true)
           if nl then
             out[#out + 1] = sub(src, pos, nl - 1)
@@ -149,7 +170,7 @@ local function strip_lua (src)
           end
         else
           local nl = find(src, "\n", cs, true)
-          pos = after_comment(src, nl or (len + 1), out, false)
+          pos = after_comment(src, pos, nl or (len + 1), out)
         end
       end
     elseif b == 34 or b == 39 then
@@ -200,7 +221,7 @@ local function strip_lua (src)
   return guard(concat(out), src, bailed)
 end
 
-local c_directives = { "NOLINT", "clang-format", "@ts-", "IWYU pragma:", "NOSONAR" }
+local c_directives = { "tk:", "NOLINT", "clang-format", "@ts-", "IWYU pragma:", "NOSONAR" }
 
 local function has_directive (src, pos, list)
   local p = ws_after(src, pos)
@@ -236,7 +257,7 @@ local function strip_c_line (src, pos, len, out)
     out[#out + 1] = sub(src, start, pos - 1)
     return pos
   end
-  return after_comment(src, pos, out, false)
+  return after_comment(src, start, pos, out)
 end
 
 local function strip_c_block (src, pos, len, out)
@@ -258,11 +279,7 @@ local function strip_c_block (src, pos, len, out)
     out[#out + 1] = sub(src, start, closed - 1)
     return closed
   end
-  local inner = sub(src, start, closed - 1)
-  local nl = inner:gsub("[^\n]", "")
-  local np = after_comment(src, closed, out, #nl > 0)
-  out[#out + 1] = nl
-  return np
+  return after_comment(src, start, closed, out)
 end
 
 local function copy_c_string (src, pos, len, out, q)
@@ -396,7 +413,7 @@ local function copy_js_regex (src, pos, len, out)
   return pos
 end
 
-local js_directives = { "@ts-", "NOLINT", "clang-format", "eslint", "istanbul", "prettier", "c8", "webpack" }
+local js_directives = { "tk:", "@ts-", "NOLINT", "clang-format", "eslint", "istanbul", "prettier", "c8", "webpack" }
 
 local function strip_js_line (src, pos, len, out)
   local start = pos
@@ -408,7 +425,7 @@ local function strip_js_line (src, pos, len, out)
     out[#out + 1] = sub(src, start, pos - 1)
     return pos
   end
-  return after_comment(src, pos, out, false)
+  return after_comment(src, start, pos, out)
 end
 
 local function strip_js_block (src, pos, len, out)
@@ -430,10 +447,7 @@ local function strip_js_block (src, pos, len, out)
     out[#out + 1] = sub(src, start, closed - 1)
     return closed
   end
-  local nl = (sub(src, start, closed - 1):gsub("[^\n]", ""))
-  local np = after_comment(src, closed, out, #nl > 0)
-  out[#out + 1] = nl
-  return np
+  return after_comment(src, start, closed, out)
 end
 
 local function strip_js (src)
@@ -503,9 +517,7 @@ local function strip_css (src)
         out[#out + 1] = sub(src, pos)
         pos = len + 1
       else
-        local nl = (sub(src, pos, closed - 1):gsub("[^\n]", ""))
-        pos = after_comment(src, closed, out, #nl > 0)
-        out[#out + 1] = nl
+        pos = after_comment(src, pos, closed, out)
       end
     elseif b == 34 or b == 39 then
       pos = copy_c_string(src, pos, len, out, b)
@@ -537,9 +549,7 @@ local function strip_html (src)
         out[#out + 1] = sub(src, pos)
         pos = len + 1
       else
-        local nl = (sub(src, pos, closed - 1):gsub("[^\n]", ""))
-        pos = after_comment(src, closed, out, #nl > 0)
-        out[#out + 1] = nl
+        pos = after_comment(src, pos, closed, out)
       end
     else
       local next_lt = find(src, "<", pos, true)
@@ -556,10 +566,6 @@ local function strip_html (src)
   return guard(concat(out), src, false)
 end
 
-local function nlonly (s)
-  return (s:gsub("[^\n]", ""))
-end
-
 local function drive (step, src)
   local out = {}
   local pos = 1
@@ -569,9 +575,7 @@ local function drive (step, src)
     local np, emit_end, stripped, nst, bail = step(src, pos, len, st)
     if bail then return src, true end
     if stripped then
-      local nl = nlonly(sub(src, pos, np - 1))
-      np = after_comment(src, np, out, #nl > 0)
-      out[#out + 1] = nl
+      np = after_comment(src, pos, np, out)
     elseif emit_end >= pos then
       out[#out + 1] = sub(src, pos, emit_end)
     end
@@ -603,7 +607,10 @@ local function at_line_start (src, pos)
 end
 
 local function is_shebang (src, pos)
-  return pos == 1 and byte(src, 1) == 35 and byte(src, 2) == 33
+  if byte(src, pos) ~= 35 or byte(src, pos + 1) ~= 33 then return false end
+  if pos == 1 then return true end
+  local nl = find(src, "\n", 1, true)
+  return nl ~= nil and pos == nl + 1
 end
 
 local function line_indent (src, pos)
@@ -683,17 +690,17 @@ local function hd_body (src, pos, stop, st, anyws)
     local nl = find(src, "\n", p, true)
     if not nl or nl > stop then break end
     if hd_end(src, p, nl - 1, st.hd, anyws) then
-      return nl + 1, nl, false, hd_pop(st)
+      return nl + 1, nl, false, hd_pop(st), nil, true
     end
     p = nl + 1
   end
   if stop >= #src then
     if p <= stop and hd_end(src, p, stop, st.hd, anyws) then
-      return stop + 1, stop, false, hd_pop(st)
+      return stop + 1, stop, false, hd_pop(st), nil, true
     end
     return stop + 1, stop, false, st, true
   end
-  return stop + 1, stop, false, st
+  return stop + 1, stop, false, st, nil, true
 end
 
 local function hd_newline (pos, st)
@@ -709,7 +716,7 @@ local function line_end (src, pos, stop)
   return stop
 end
 
-local sh_directives = { "shellcheck", "noqa", "type:", "pylint", "mypy", "fmt:", "pragma:" }
+local sh_directives = { "tk:", "shellcheck", "noqa", "type:", "pylint", "mypy", "fmt:", "pragma:" }
 
 local function step_sh (src, pos, stop, st)
   st = st or {}
@@ -720,10 +727,10 @@ local function step_sh (src, pos, stop, st)
     while p <= stop do
       local c = byte(src, p)
       if esc and c == 92 then p = p + 2
-      elseif c == q then return p + 1, p, false, { pend = st.pend }
+      elseif c == q then return p + 1, p, false, { pend = st.pend }, nil, true
       else p = p + 1 end
     end
-    return stop + 1, stop, false, st
+    return stop + 1, stop, false, st, nil, true
   end
   if st.arith then
     local d = st.arith
@@ -752,10 +759,10 @@ local function step_sh (src, pos, stop, st)
     while p <= stop do
       local c = byte(src, p)
       if esc and c == 92 then p = p + 2
-      elseif c == b then return p + 1, p, false, { pend = st.pend }
+      elseif c == b then return p + 1, p, false, { pend = st.pend }, nil, true
       else p = p + 1 end
     end
-    return stop + 1, stop, false, { pend = st.pend, q = b, esc = esc }
+    return stop + 1, stop, false, { pend = st.pend, q = b, esc = esc }, nil, true
   elseif b == 92 then
     local last = pos + 1 <= stop and pos + 1 or stop
     return last + 1, last, false, st
@@ -843,7 +850,7 @@ local function step_hcl (src, pos, stop, st)
 end
 
 local py_directives = {
-  "noqa", "type:", "pylint", "mypy", "fmt:", "pragma:", "-*-", "coding=", "coding:",
+  "tk:", "noqa", "type:", "pylint", "mypy", "fmt:", "pragma:", "-*-", "coding=", "coding:",
 }
 
 local function py_string (src, stop, q, n, from)
@@ -854,14 +861,14 @@ local function py_string (src, stop, q, n, from)
     elseif c == q then
       if n == 1 then return p + 1, p, false, nil end
       if byte(src, p + 1) == q and byte(src, p + 2) == q then
-        return p + 3, p + 2, false, nil
+        return p + 3, p + 2, false, nil, nil, true
       end
       p = p + 1
     elseif c == 10 and n == 1 then
       return p, p - 1, false, nil
     else p = p + 1 end
   end
-  return stop + 1, stop, false, { q = q, n = n }
+  return stop + 1, stop, false, { q = q, n = n }, nil, n == 3
 end
 
 local function step_python (src, pos, stop, st)
@@ -887,7 +894,7 @@ local function step_python (src, pos, stop, st)
 end
 
 local yaml_directives = {
-  "cloud-config", "yaml-language-server:", "noqa", "type:", "fmt:", "pragma:", "shellcheck",
+  "tk:", "cloud-config", "yaml-language-server:", "noqa", "type:", "fmt:", "pragma:", "shellcheck",
 }
 
 local function yaml_block (src, pos, stop, st)
@@ -903,12 +910,12 @@ local function yaml_block (src, pos, stop, st)
     end
     local blank = q > le or byte(src, q) == 13
     if not blank and n <= st.blk then
-      return p, p - 1, false, nil
+      return p, p - 1, false, nil, nil, true
     end
     if not nl or nl > stop then break end
     p = nl + 1
   end
-  return stop + 1, stop, false, st
+  return stop + 1, stop, false, st, nil, true
 end
 
 local function yaml_indicator (src, pos, stop)
@@ -971,7 +978,7 @@ local function step_yaml (src, pos, stop, st)
   return last + 1, last, false, nil
 end
 
-local docker_directives = { "syntax=", "escape=", "check=" }
+local docker_directives = { "tk:", "syntax=", "escape=", "check=" }
 
 local function step_dockerfile (src, pos, stop, st)
   st = st or {}
@@ -1020,7 +1027,7 @@ local function step_unit (src, pos, stop, _st)
   return last + 1, last, false, nil
 end
 
-local conf_directives = { "shellcheck", "noqa", "fmt:", "pragma:" }
+local conf_directives = { "tk:", "shellcheck", "noqa", "fmt:", "pragma:" }
 
 local function step_conf (src, pos, stop, st)
   if st and st.q then
@@ -1136,10 +1143,10 @@ local function step_lua (src, pos, stop, st)
       local level = st.level
       while pos <= stop do
         local e = long_bracket_close(src, pos, level)
-        if e then return e, e - 1, false, nil end
+        if e then return e, e - 1, false, nil, nil, true end
         pos = pos + 1
       end
-      return stop + 1, stop, false, st
+      return stop + 1, stop, false, st, nil, true
     end
   end
   local b = byte(src, pos)
@@ -1157,7 +1164,7 @@ local function step_lua (src, pos, stop, st)
     end
     local txt = ws_after(src, cs)
     local rest = sub(src, txt)
-    if find(rest, "^luacheck:") or find(rest, "^luacov:") then
+    if find(rest, "^luacheck:") or find(rest, "^luacov:") or find(rest, "^tk:") then
       local nl = find(src, "\n", pos, true)
       local last = nl and (nl - 1) or stop
       if last > stop then last = stop end
@@ -1184,10 +1191,10 @@ local function step_lua (src, pos, stop, st)
       local p = after
       while p <= stop do
         local e = long_bracket_close(src, p, lvl)
-        if e then return e, e - 1, false, nil end
+        if e then return e, e - 1, false, nil, nil, true end
         p = p + 1
       end
-      return stop + 1, stop, false, { kind = "long", level = lvl }
+      return stop + 1, stop, false, { kind = "long", level = lvl }, nil, true
     end
     return pos + 1, pos, false, nil
   end
@@ -1282,12 +1289,12 @@ local function step_js (src, pos, stop, st)
       local c = byte(src, pos)
       if c == 92 then pos = pos + 2
       elseif c == 96 and depth == 0 then
-        return pos + 1, pos, false, { kind = "js", last = "\1" }
+        return pos + 1, pos, false, { kind = "js", last = "\1" }, nil, true
       elseif c == 36 and byte(src, pos + 1) == 123 then depth = depth + 1; pos = pos + 2
       elseif c == 125 and depth > 0 then depth = depth - 1; pos = pos + 1
       else pos = pos + 1 end
     end
-    return stop + 1, stop, false, { kind = "tmpl", depth = depth }
+    return stop + 1, stop, false, { kind = "tmpl", depth = depth }, nil, true
   elseif st and st.kind == "cmt" then
     while pos <= stop do
       if byte(src, pos) == 42 and byte(src, pos + 1) == 47 then
@@ -1355,12 +1362,12 @@ local function step_js (src, pos, stop, st)
       local c = byte(src, np)
       if c == 92 then np = np + 2
       elseif c == 96 and depth == 0 then
-        return np + 1, np, false, { kind = "js", last = "\1" }
+        return np + 1, np, false, { kind = "js", last = "\1" }, nil, true
       elseif c == 36 and byte(src, np + 1) == 123 then depth = depth + 1; np = np + 2
       elseif c == 125 and depth > 0 then depth = depth - 1; np = np + 1
       else np = np + 1 end
     end
-    return stop + 1, stop, false, { kind = "tmpl", depth = depth }
+    return stop + 1, stop, false, { kind = "tmpl", depth = depth }, nil, true
   elseif is_ident_ch(b) then
     local np = pos
     while np <= stop and is_ident_ch(byte(src, np)) do np = np + 1 end
@@ -1490,9 +1497,7 @@ local function strip_template (src, output_lang)
           local np, emit_end, stripped, nst, bail = step(src, pos, seg_stop, st)
           if bail then return src, true end
           if stripped then
-            local nl = nlonly(sub(src, pos, np - 1))
-            np = after_comment(src, np, out, #nl > 0)
-            out[#out + 1] = nl
+            np = after_comment(src, pos, np, out)
           elseif emit_end >= pos then
             out[#out + 1] = sub(src, pos, emit_end)
           end
@@ -1580,13 +1585,112 @@ local function license_head (src)
   return nil
 end
 
+local function mark_protected (src, step, from, to, prot)
+  local pos = from
+  local st = nil
+  while pos <= to do
+    local np, _, stripped, nst, bail, opaque = step(src, pos, to, st)
+    if bail then return false end
+    if stripped or opaque then
+      local i = find(src, "\n", pos, true)
+      while i and i < np do
+        prot[i] = true
+        i = find(src, "\n", i + 1, true)
+      end
+    end
+    pos = np
+    st = nst
+  end
+  return true
+end
+
+local function collapse_marked (src, prot)
+  local out = {}
+  local len = #src
+  local pos = 1
+  local blanks = 0
+  while pos <= len do
+    local nl = find(src, "\n", pos, true)
+    local last = nl or len
+    local text = sub(src, pos, nl and (nl - 1) or len)
+    if nl and not prot[nl] and text:match("^[ \t\r]*$") then
+      blanks = blanks + 1
+      if blanks <= 1 then
+        out[#out + 1] = sub(src, pos, last)
+      end
+    else
+      blanks = 0
+      out[#out + 1] = sub(src, pos, last)
+    end
+    pos = last + 1
+  end
+  return concat(out)
+end
+
+local function collapse_blanks (src, lang, templated)
+  local step = steppers[lang]
+  local prot = {}
+  if templated then
+    local pos = 1
+    local len = #src
+    while pos <= len do
+      if byte(src, pos) == 60 and byte(src, pos + 1) == 37 then
+        local close = find(src, "%>", pos + 2, true)
+        local stop = close and (close + 1) or len
+        local i = find(src, "\n", pos, true)
+        while i and i <= stop do
+          prot[i] = true
+          i = find(src, "\n", i + 1, true)
+        end
+        pos = stop + 1
+      else
+        local seg = find(src, "<%", pos, true)
+        local stop = seg and (seg - 1) or len
+        if step and stop >= pos and not mark_protected(src, step, pos, stop, prot) then
+          return src
+        end
+        pos = stop + 1
+      end
+    end
+  else
+    if not step then return src end
+    if not mark_protected(src, step, 1, #src, prot) then return src end
+  end
+  return collapse_marked(src, prot)
+end
+
 local function split_ext (filename)
   local base = filename:match("[^/\\]+$") or filename
   local tk = base:match("%.tk%.([%w]+)$")
   if tk then
     return true, tk:lower()
   end
+  tk = base:match("%.([%w]+)%.tk$")
+  if tk then
+    return true, tk:lower()
+  end
+  if base:match("%.tk$") then
+    return true, nil
+  end
   return false, base
+end
+
+local function tk_directive (src)
+  local len = #src
+  local pos = 1
+  for _ = 1, 2 do
+    if pos > len then break end
+    local e = (find(src, "\n", pos, true) or (len + 1)) - 1
+    local line = sub(src, pos, e)
+    local lang =
+      line:match("^%s*#+%s*tk:%s*([%w]+)") or
+      line:match("^%s*%-%-%s*tk:%s*([%w]+)") or
+      line:match("^%s*//%s*tk:%s*([%w]+)") or
+      line:match("^%s*;+%s*tk:%s*([%w]+)")
+    if lang then return lang:lower() end
+    pos = e + 2
+  end
+  return nil
 end
 
 local function lang_for (src, base)
@@ -1598,6 +1702,7 @@ local function lang_for (src, base)
 end
 
 local function coverage (src, filename)
+  if tk_directive(src) then return "checked" end
   local is_tk, rest = split_ext(filename)
   if is_tk then return "checked" end
   local fn = ext_map[lang_for(src, rest)]
@@ -1608,11 +1713,17 @@ end
 
 local function strip (src, filename)
   local is_tk, rest = split_ext(filename)
+  local tk = tk_directive(src)
+  if tk then
+    is_tk, rest = true, tk
+  end
   local fn
+  local lang = rest
   if is_tk then
     fn = function (s) return strip_template(s, rest) end
   else
-    fn = ext_map[lang_for(src, rest)]
+    lang = lang_for(src, rest)
+    fn = ext_map[lang]
     if fn == nil or fn == false then
       return src, false
     end
@@ -1627,6 +1738,8 @@ local function strip (src, filename)
     out, bailed = fn(src)
   end
   if bailed then return src, true end
+  out = collapse_blanks(out, lang, is_tk)
+  if not is_subseq(out, src) then return src, true end
   if license_count(out) < license_count(src) then return src, true end
   return out, false
 end

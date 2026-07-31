@@ -73,9 +73,9 @@ test("strip_lua", function ()
     assert(is_subseq(out, src))
   end)
 
-  test("full line comment leaves an empty line", function ()
+  test("full line comment is deleted, not blanked", function ()
     local out = strip.strip_lua("a = 1\n  \t-- foo\nb = 2\n")
-    assert(out == "a = 1\n\nb = 2\n")
+    assert(out == "a = 1\nb = 2\n")
   end)
 
   test("comment at end of file without newline", function ()
@@ -138,9 +138,9 @@ test("strip_c", function ()
     assert(out == "a\nb\n")
   end)
 
-  test("block comment spanning lines keeps newlines", function ()
+  test("inline block comment spanning lines joins them", function ()
     local out = strip.strip_c("a /* one\ntwo */ b\n")
-    assert(out == "a\n b\n")
+    assert(out == "a  b\n")
   end)
 
   test("NOLINT preserved", function ()
@@ -160,12 +160,12 @@ test("strip_c", function ()
     assert(is_subseq(out, src))
   end)
 
-  test("indented line comment leaves an empty line", function ()
-    assert(strip.strip_c("a;\n  // c\nb;\n") == "a;\n\nb;\n")
+  test("indented line comment is deleted", function ()
+    assert(strip.strip_c("a;\n  // c\nb;\n") == "a;\nb;\n")
   end)
 
-  test("indented block comment leaves an empty line", function ()
-    assert(strip.strip_c("a;\n  /* c */  \nb;\n") == "a;\n\nb;\n")
+  test("indented block comment is deleted", function ()
+    assert(strip.strip_c("a;\n  /* c */  \nb;\n") == "a;\nb;\n")
   end)
 
   test("inline block comment keeps token separation", function ()
@@ -225,8 +225,8 @@ test("strip_js", function ()
     assert(strip.strip_js("var x = 1;  \t // c\n") == "var x = 1;\n")
   end)
 
-  test("indented comment leaves an empty line", function ()
-    assert(strip.strip_js("a;\n  // c\nb;\n") == "a;\n\nb;\n")
+  test("indented comment is deleted", function ()
+    assert(strip.strip_js("a;\n  // c\nb;\n") == "a;\nb;\n")
   end)
 
   test("trailing whitespace inside template literal preserved", function ()
@@ -253,8 +253,8 @@ test("strip_css", function ()
     assert(strip.strip_css(src) == src)
   end)
 
-  test("indented comment leaves an empty line", function ()
-    assert(strip.strip_css(".a{}\n  /* c */\n.b{}\n") == ".a{}\n\n.b{}\n")
+  test("indented comment is deleted", function ()
+    assert(strip.strip_css(".a{}\n  /* c */\n.b{}\n") == ".a{}\n.b{}\n")
   end)
 
   test("inline comment keeps token separation", function ()
@@ -280,8 +280,8 @@ test("strip_conf", function ()
     assert(strip.strip_conf(src) == src)
   end)
 
-  test("indented comment leaves an empty line", function ()
-    assert(strip.strip_conf("a;\n  # c\nb;\n") == "a;\n\nb;\n")
+  test("indented comment is deleted", function ()
+    assert(strip.strip_conf("a;\n  # c\nb;\n") == "a;\nb;\n")
   end)
 
   test("trailing whitespace inside string preserved", function ()
@@ -298,13 +298,13 @@ test("strip_html", function ()
     assert(out == "<div>ab</div>")
   end)
 
-  test("multiline comment keeps newlines", function ()
+  test("inline multiline comment joins the lines", function ()
     local out = strip.strip_html("<p>x<!-- one\ntwo -->y</p>")
-    assert(out == "<p>x\ny</p>")
+    assert(out == "<p>xy</p>")
   end)
 
-  test("indented comment leaves an empty line", function ()
-    assert(strip.strip_html("<p>x</p>\n  <!-- c -->  \n<p>y</p>") == "<p>x</p>\n\n<p>y</p>")
+  test("indented comment is deleted", function ()
+    assert(strip.strip_html("<p>x</p>\n  <!-- c -->  \n<p>y</p>") == "<p>x</p>\n<p>y</p>")
   end)
 
   test("inline comment keeps surrounding text spacing", function ()
@@ -381,9 +381,9 @@ test("strip_template", function ()
     assert(is_subseq(out, src))
   end)
 
-  test("indented literal comment leaves an empty line", function ()
+  test("indented literal comment is deleted", function ()
     local out = strip.strip_template("a;\n  // gone\n<% y() %>\n", "c")
-    assert(out == "a;\n\n<% y() %>\n")
+    assert(out == "a;\n<% y() %>\n")
   end)
 
   test("output long string trailing whitespace preserved across code", function ()
@@ -396,7 +396,7 @@ test("strip_template", function ()
   test("multiline literal block comment trims what precedes it", function ()
     local src = "a;  /* one\ntwo */\nb;\n"
     local out = strip.strip_template(src, "c")
-    assert(out == "a;\n\nb;\n")
+    assert(out == "a;\nb;\n")
     assert(is_subseq(out, src))
   end)
 
@@ -411,7 +411,7 @@ test("strip_sh", function ()
 
   test("removes decorative comment", function ()
     local out = strip.strip_sh("#!/bin/sh\n# gone\necho a # also gone\n")
-    assert(out == "#!/bin/sh\n\necho a\n")
+    assert(out == "#!/bin/sh\necho a\n")
   end)
 
   test("shellcheck directive preserved", function ()
@@ -441,7 +441,7 @@ test("strip_sh", function ()
 
   test("heredoc body is opaque", function ()
     local src = "cat <<EOF\n# not a comment\n#!/bin/sh\nEOF\n# gone\n"
-    assert(strip.strip_sh(src) == "cat <<EOF\n# not a comment\n#!/bin/sh\nEOF\n\n")
+    assert(strip.strip_sh(src) == "cat <<EOF\n# not a comment\n#!/bin/sh\nEOF\n")
   end)
 
   test("dash heredoc allows tab-indented terminator", function ()
@@ -461,12 +461,12 @@ test("strip_sh", function ()
 
   test("herestring is not a heredoc", function ()
     local out = strip.strip_sh("cmd <<< \"$x\"\n# gone\n")
-    assert(out == "cmd <<< \"$x\"\n\n")
+    assert(out == "cmd <<< \"$x\"\n")
   end)
 
   test("arithmetic left shift is not a heredoc", function ()
     local out = strip.strip_sh("x=$(( a << b ))\n# gone\n")
-    assert(out == "x=$(( a << b ))\n\n")
+    assert(out == "x=$(( a << b ))\n")
   end)
 
   test("unterminated heredoc bails", function ()
@@ -506,11 +506,11 @@ test("strip_hcl", function ()
 
   test("comment before heredoc still removed", function ()
     local out = strip.strip_hcl("# gone\nx = <<EOF\n# keep\nEOF\n")
-    assert(out == "\nx = <<EOF\n# keep\nEOF\n")
+    assert(out == "x = <<EOF\n# keep\nEOF\n")
   end)
 
-  test("multiline block comment keeps newlines", function ()
-    assert(strip.strip_hcl("a\n/* one\ntwo */\nb\n") == "a\n\n\nb\n")
+  test("multiline block comment on its own lines is deleted", function ()
+    assert(strip.strip_hcl("a\n/* one\ntwo */\nb\n") == "a\nb\n")
   end)
 
   test("single quote is not a string delimiter", function ()
@@ -562,7 +562,7 @@ test("strip_yaml", function ()
 
   test("removes comment", function ()
     local out = strip.strip_yaml("dbs:\n  # gone\n  retention: 720h  # also gone\n")
-    assert(out == "dbs:\n\n  retention: 720h\n")
+    assert(out == "dbs:\n  retention: 720h\n")
   end)
 
   test("cloud-config directive preserved", function ()
@@ -593,7 +593,7 @@ test("strip_yaml", function ()
   test("literal block scalar is opaque", function ()
     local src = "    content: |\n      #!/bin/bash\n      # keep\n      exit 0\nruncmd:\n  # gone\n"
     assert(strip.strip_yaml(src) ==
-      "    content: |\n      #!/bin/bash\n      # keep\n      exit 0\nruncmd:\n\n")
+      "    content: |\n      #!/bin/bash\n      # keep\n      exit 0\nruncmd:\n")
   end)
 
   test("folded block scalar with chomping indicator is opaque", function ()
@@ -622,7 +622,7 @@ test("strip_dockerfile", function ()
 
   test("removes comment lines", function ()
     local out = strip.strip_dockerfile("FROM alpine\n# gone\nRUN true\n")
-    assert(out == "FROM alpine\n\nRUN true\n")
+    assert(out == "FROM alpine\nRUN true\n")
   end)
 
   test("inline hash is not a comment", function ()
@@ -632,7 +632,7 @@ test("strip_dockerfile", function ()
 
   test("comment inside a line continuation removed", function ()
     local out = strip.strip_dockerfile("RUN foo \\\n  # gone\n  bar\n")
-    assert(out == "RUN foo \\\n\n  bar\n")
+    assert(out == "RUN foo \\\n  bar\n")
   end)
 
   test("heredoc body is opaque", function ()
@@ -642,7 +642,7 @@ test("strip_dockerfile", function ()
 
   test("shift operator inside quotes is not a heredoc", function ()
     local out = strip.strip_dockerfile("RUN echo \"a << b\"\n# gone\n")
-    assert(out == "RUN echo \"a << b\"\n\n")
+    assert(out == "RUN echo \"a << b\"\n")
   end)
 
 end)
@@ -651,7 +651,7 @@ test("strip_unit", function ()
 
   test("removes hash and semicolon comment lines", function ()
     local out = strip.strip_unit("[Unit]\n# gone\n; also gone\nDescription=x\n")
-    assert(out == "[Unit]\n\n\nDescription=x\n")
+    assert(out == "[Unit]\nDescription=x\n")
   end)
 
   test("inline hash and semicolon preserved", function ()
@@ -698,6 +698,165 @@ test("html inside lua strings", function ()
 
 end)
 
+test("comment lines are deleted, not blanked", function ()
+
+  test("consecutive full-line comments all disappear", function ()
+    local out = strip.strip_lua("a = 1\n-- one\n-- two\n-- three\nb = 2\n")
+    assert(out == "a = 1\nb = 2\n")
+  end)
+
+  test("comment as the only content leaves nothing", function ()
+    assert(strip.strip_lua("-- gone\n") == "")
+  end)
+
+  test("comment on the first line is deleted", function ()
+    assert(strip.strip_lua("-- gone\na = 1\n") == "a = 1\n")
+  end)
+
+  test("full-line comment with no trailing newline", function ()
+    assert(strip.strip_lua("a = 1\n-- gone") == "a = 1\n")
+  end)
+
+  test("crlf full-line comment consumes both bytes", function ()
+    assert(strip.strip_lua("a = 1\r\n-- gone\r\nb = 2\r\n") == "a = 1\r\nb = 2\r\n")
+  end)
+
+  test("trailing comment keeps its line", function ()
+    assert(strip.strip_lua("a = 1 -- gone\nb = 2\n") == "a = 1\nb = 2\n")
+  end)
+
+  test("shell block of comments disappears entirely", function ()
+    local out = strip.strip_sh("#!/bin/sh\n# one\n# two\necho a\n")
+    assert(out == "#!/bin/sh\necho a\n")
+  end)
+
+  test("output is still a subsequence after deletion", function ()
+    local src = "a = 1\n  -- gone\n  -- also\nb = 2 -- and\n"
+    local out = strip.strip_lua(src)
+    assert(out == "a = 1\nb = 2\n")
+    assert(is_subseq(out, src))
+  end)
+
+end)
+
+test("blank line collapsing", function ()
+
+  test("blank lines either side of a deletion collapse to one", function ()
+    assert(strip.strip("a = 1\n\n-- gone\n\nb = 2\n", "a.lua") == "a = 1\n\nb = 2\n")
+  end)
+
+  test("a single blank line is preserved", function ()
+    assert(strip.strip("a = 1\n\nb = 2\n", "a.lua") == "a = 1\n\nb = 2\n")
+  end)
+
+  test("pre-existing runs collapse even with no comment present", function ()
+    assert(strip.strip("a = 1\n\n\n\nb = 2\n", "a.lua") == "a = 1\n\nb = 2\n")
+  end)
+
+  test("many blank lines after a deletion collapse to one", function ()
+    assert(strip.strip("a = 1\n-- gone\n\n\n\nb = 2\n", "a.lua") == "a = 1\n\nb = 2\n")
+  end)
+
+  test("no blank lines stays no blank lines", function ()
+    assert(strip.strip("a = 1\n-- gone\nb = 2\n", "a.lua") == "a = 1\nb = 2\n")
+  end)
+
+  test("whitespace-only lines count as blank", function ()
+    assert(strip.strip("a = 1\n   \n\t\n\nb = 2\n", "a.lua") == "a = 1\n   \nb = 2\n")
+  end)
+
+  test("blank runs inside a lua long string are untouched", function ()
+    local src = "local s = [[\n\n\n\nkeep\n]]\n\n\nb = 2\n"
+    assert(strip.strip(src, "a.lua") == "local s = [[\n\n\n\nkeep\n]]\n\nb = 2\n")
+  end)
+
+  test("blank runs inside a heredoc are untouched", function ()
+    local src = "cat <<EOF\n\n\n\nkeep\nEOF\n\n\necho a\n"
+    assert(strip.strip(src, "a.sh") == "cat <<EOF\n\n\n\nkeep\nEOF\n\necho a\n")
+  end)
+
+  test("blank runs inside a js template literal are untouched", function ()
+    local src = "var t = `\n\n\nx`;\n\n\nvar u = 1;\n"
+    assert(strip.strip(src, "a.js") == "var t = `\n\n\nx`;\n\nvar u = 1;\n")
+  end)
+
+  test("blank runs inside a python triple quote are untouched", function ()
+    local src = "s = \'\'\'\n\n\nx\'\'\'\n\n\ny = 1\n"
+    assert(strip.strip(src, "a.py") == "s = \'\'\'\n\n\nx\'\'\'\n\ny = 1\n")
+  end)
+
+  test("blank runs inside a yaml block scalar are untouched", function ()
+    local src = "a: |\n  x\n\n\n  y\nb: 1\n\n\nc: 2\n"
+    assert(strip.strip(src, "a.yml") == "a: |\n  x\n\n\n  y\nb: 1\n\nc: 2\n")
+  end)
+
+  test("collapsing keeps the subsequence guarantee", function ()
+    local src = "a = 1\n\n\n\n-- gone\n\n\nb = 2\n"
+    local out, bailed = strip.strip(src, "a.lua")
+    assert(not bailed)
+    assert(out == "a = 1\n\nb = 2\n")
+    assert(is_subseq(out, src))
+  end)
+
+  test("templates collapse literal regions but not code blocks", function ()
+    local src = "a = 1\n\n\n<% x()\n\n\ny() %>\n\n\nb = 2\n"
+    assert(strip.strip(src, "f.tk.lua") == "a = 1\n\n<% x()\n\n\ny() %>\n\nb = 2\n")
+  end)
+
+  test("unknown types are left alone entirely", function ()
+    local src = "x\n\n\n\ny\n"
+    assert(strip.strip(src, "a.sql") == src)
+  end)
+
+end)
+
+test("tk directive and suffix form", function ()
+
+  test("dot-tk suffix routes to template with the prior extension", function ()
+    local src = "#include <x.h>\n<% return readfile(\"res/k.h\") %>\nint a; // gone\n"
+    assert(strip.strip(src, "klib.h.tk") ==
+      "#include <x.h>\n<% return readfile(\"res/k.h\") %>\nint a;\n")
+  end)
+
+  test("bare dot-tk strips only the code blocks", function ()
+    local src = "anything <% x() -- gone %> here\n"
+    assert(strip.strip(src, "thing.tk") == "anything <% x()%> here\n")
+  end)
+
+  test("hash directive declares a shell template", function ()
+    local src = "# tk: sh\n#!/bin/sh\n<% return v %>\necho a # gone\n"
+    assert(strip.strip(src, "res/lib/test-run.sh") ==
+      "# tk: sh\n#!/bin/sh\n<% return v %>\necho a\n")
+  end)
+
+  test("directive is honoured on line two, after a shebang", function ()
+    local src = "#!/bin/sh\n# tk: sh\n<% return v %>\necho a # gone\n"
+    assert(strip.strip(src, "run.sh") == "#!/bin/sh\n# tk: sh\n<% return v %>\necho a\n")
+  end)
+
+  test("dash directive declares a lua template", function ()
+    local src = "-- tk: lua\nlocal x = <% return v %> -- luacheck: ignore\nlocal y = 1 -- gone\n"
+    assert(strip.strip(src, "template.rockspec") ==
+      "-- tk: lua\nlocal x = <% return v %> -- luacheck: ignore\nlocal y = 1\n")
+  end)
+
+  test("directive beats the filename", function ()
+    local src = "# tk: sh\nfoo # gone\n"
+    assert(strip.strip(src, "lib.mk") == "# tk: sh\nfoo\n")
+  end)
+
+  test("directive makes an otherwise unknown type covered", function ()
+    assert(strip.coverage("# tk: sh\nfoo\n", "lib.mk") == "checked")
+    assert(strip.coverage("foo\n", "lib.mk") == "unknown")
+  end)
+
+  test("unrelated tk-looking text is not a directive", function ()
+    local src = "local tk = 1 -- gone\n"
+    assert(strip.strip(src, "a.lua") == "local tk = 1\n")
+  end)
+
+end)
+
 test("license headers", function ()
 
   test("c block notice survives, code comments do not", function ()
@@ -738,7 +897,7 @@ test("license headers", function ()
 
   test("ordinary head comment is still stripped", function ()
     local src = "/* just a description */\nint x;\n"
-    assert(strip.strip(src, "a.c") == "\nint x;\n")
+    assert(strip.strip(src, "a.c") == "int x;\n")
   end)
 
   test("head rule does not fire on a directive-only head", function ()
@@ -753,9 +912,9 @@ test("license headers", function ()
     assert(out == src)
   end)
 
-  test("blank lines before the notice are tolerated", function ()
+  test("blank lines before the notice are tolerated and collapsed", function ()
     local src = "\n\n/* Copyright 2020 X */\nint y; // gone\n"
-    assert(strip.strip(src, "a.c") == "\n\n/* Copyright 2020 X */\nint y;\n")
+    assert(strip.strip(src, "a.c") == "\n/* Copyright 2020 X */\nint y;\n")
   end)
 
 end)
@@ -872,13 +1031,13 @@ test("strip dispatcher", function ()
   end)
 
   test("routes dockerfile by extension and by basename", function ()
-    assert(strip.strip("FROM a\n# c\n", "deployment.dockerfile") == "FROM a\n\n")
-    assert(strip.strip("FROM a\n# c\n", "Dockerfile") == "FROM a\n\n")
-    assert(strip.strip("FROM a\n# c\n", "x/y/Dockerfile") == "FROM a\n\n")
+    assert(strip.strip("FROM a\n# c\n", "deployment.dockerfile") == "FROM a\n")
+    assert(strip.strip("FROM a\n# c\n", "Dockerfile") == "FROM a\n")
+    assert(strip.strip("FROM a\n# c\n", "x/y/Dockerfile") == "FROM a\n")
   end)
 
   test("routes service and env", function ()
-    assert(strip.strip("[Unit]\n# c\n", "a.service") == "[Unit]\n\n")
+    assert(strip.strip("[Unit]\n# c\n", "a.service") == "[Unit]\n")
     assert(strip.strip("A=1 # c\n", "build.env") == "A=1\n")
   end)
 
