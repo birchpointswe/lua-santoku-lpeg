@@ -402,6 +402,395 @@ test("strip_template", function ()
 
 end)
 
+test("strip_sh", function ()
+
+  test("shebang preserved", function ()
+    local src = "#!/bin/bash\necho hi\n"
+    assert(strip.strip_sh(src) == src)
+  end)
+
+  test("removes decorative comment", function ()
+    local out = strip.strip_sh("#!/bin/sh\n# gone\necho a # also gone\n")
+    assert(out == "#!/bin/sh\n\necho a\n")
+  end)
+
+  test("shellcheck directive preserved", function ()
+    local src = "# shellcheck disable=SC2086\nfoo $bar\n"
+    assert(strip.strip_sh(src) == src)
+  end)
+
+  test("hash in parameter expansion not a comment", function ()
+    local src = "code=\"${status#* }\"\nn=$#\n"
+    assert(strip.strip_sh(src) == src)
+  end)
+
+  test("hash mid-word not a comment", function ()
+    local src = "[[ \"$key\" =~ ^# ]] && continue\n"
+    assert(strip.strip_sh(src) == src)
+  end)
+
+  test("shebang inside a string preserved", function ()
+    local src = "printf '%s' \"#!/bin/bash\"\n"
+    assert(strip.strip_sh(src) == src)
+  end)
+
+  test("hash inside single quotes preserved", function ()
+    local src = "grep '# keep me' f\n"
+    assert(strip.strip_sh(src) == src)
+  end)
+
+  test("heredoc body is opaque", function ()
+    local src = "cat <<EOF\n# not a comment\n#!/bin/sh\nEOF\n# gone\n"
+    assert(strip.strip_sh(src) == "cat <<EOF\n# not a comment\n#!/bin/sh\nEOF\n\n")
+  end)
+
+  test("dash heredoc allows tab-indented terminator", function ()
+    local src = "cat <<-EOF\n\t# keep\n\tEOF\n"
+    assert(strip.strip_sh(src) == src)
+  end)
+
+  test("quoted heredoc delimiter", function ()
+    local src = "cat > f << 'CONF'\n# keep\nCONF\n"
+    assert(strip.strip_sh(src) == src)
+  end)
+
+  test("two heredocs queued on one line", function ()
+    local src = "cmd <<A <<B\n# a\nA\n# b\nB\n"
+    assert(strip.strip_sh(src) == src)
+  end)
+
+  test("herestring is not a heredoc", function ()
+    local out = strip.strip_sh("cmd <<< \"$x\"\n# gone\n")
+    assert(out == "cmd <<< \"$x\"\n\n")
+  end)
+
+  test("arithmetic left shift is not a heredoc", function ()
+    local out = strip.strip_sh("x=$(( a << b ))\n# gone\n")
+    assert(out == "x=$(( a << b ))\n\n")
+  end)
+
+  test("unterminated heredoc bails", function ()
+    local out, bailed = strip.strip_sh("cat <<EOF\n# keep\n")
+    assert(bailed)
+    assert(out == "cat <<EOF\n# keep\n")
+  end)
+
+  test("comment after semicolon is left alone", function ()
+    local src = "a;#b\n"
+    assert(strip.strip_sh(src) == src)
+  end)
+
+end)
+
+test("strip_hcl", function ()
+
+  test("removes hash slash and block comments", function ()
+    local out = strip.strip_hcl("a = 1 # x\nb = 2 // y\nc = 3 /* z */\n")
+    assert(out == "a = 1\nb = 2\nc = 3\n")
+  end)
+
+  test("hash inside string preserved", function ()
+    local src = "default = \"ami#0f5\"\n"
+    assert(strip.strip_hcl(src) == src)
+  end)
+
+  test("trailing comment after string removed", function ()
+    local out = strip.strip_hcl("default = \"ami-0f5\" # Debian 12 ARM\n")
+    assert(out == "default = \"ami-0f5\"\n")
+  end)
+
+  test("cloud-init heredoc is opaque", function ()
+    local src = "user_data = <<-EOF\n#cloud-config\n      #!/bin/bash\n      # keep\nEOF\n"
+    assert(strip.strip_hcl(src) == src)
+  end)
+
+  test("comment before heredoc still removed", function ()
+    local out = strip.strip_hcl("# gone\nx = <<EOF\n# keep\nEOF\n")
+    assert(out == "\nx = <<EOF\n# keep\nEOF\n")
+  end)
+
+  test("multiline block comment keeps newlines", function ()
+    assert(strip.strip_hcl("a\n/* one\ntwo */\nb\n") == "a\n\n\nb\n")
+  end)
+
+  test("single quote is not a string delimiter", function ()
+    local src = "x = \"it's\" # gone\n"
+    assert(strip.strip_hcl(src) == "x = \"it's\"\n")
+  end)
+
+end)
+
+test("strip_python", function ()
+
+  test("shebang and coding line preserved", function ()
+    local src = "#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\nx = 1\n"
+    assert(strip.strip_python(src) == src)
+  end)
+
+  test("removes comment", function ()
+    assert(strip.strip_python("x = 1  # gone\n") == "x = 1\n")
+  end)
+
+  test("noqa and type directives preserved", function ()
+    local src = "import os  # noqa: F401\nx = []  # type: list\n"
+    assert(strip.strip_python(src) == src)
+  end)
+
+  test("hash inside string preserved", function ()
+    local src = "s = \"# not a comment\"\nt = '#either'\n"
+    assert(strip.strip_python(src) == src)
+  end)
+
+  test("docstring is not a comment", function ()
+    local src = "def f():\n    \"\"\"Doc # with hash.\"\"\"\n    return 1\n"
+    assert(strip.strip_python(src) == src)
+  end)
+
+  test("triple quoted string spanning lines preserved", function ()
+    local src = "s = '''\n# keep\n'''  # gone\n"
+    assert(strip.strip_python(src) == "s = '''\n# keep\n'''\n")
+  end)
+
+  test("f-string brace content preserved", function ()
+    local src = "s = f\"{a}#{b}\"\n"
+    assert(strip.strip_python(src) == src)
+  end)
+
+end)
+
+test("strip_yaml", function ()
+
+  test("removes comment", function ()
+    local out = strip.strip_yaml("dbs:\n  # gone\n  retention: 720h  # also gone\n")
+    assert(out == "dbs:\n\n  retention: 720h\n")
+  end)
+
+  test("cloud-config directive preserved", function ()
+    local src = "#cloud-config\nusers:\n  - default\n"
+    assert(strip.strip_yaml(src) == src)
+  end)
+
+  test("yaml-language-server directive preserved", function ()
+    local src = "# yaml-language-server: $schema=x.json\na: 1\n"
+    assert(strip.strip_yaml(src) == src)
+  end)
+
+  test("hash without leading space is not a comment", function ()
+    local src = "url: http://example.com/x#frag\n"
+    assert(strip.strip_yaml(src) == src)
+  end)
+
+  test("hash inside quotes preserved", function ()
+    local src = "a: \"# no\"\nb: '# no'\n"
+    assert(strip.strip_yaml(src) == src)
+  end)
+
+  test("single quote doubling is an escape", function ()
+    local src = "permissions: '0755'\nb: 2  # gone\n"
+    assert(strip.strip_yaml(src) == "permissions: '0755'\nb: 2\n")
+  end)
+
+  test("literal block scalar is opaque", function ()
+    local src = "    content: |\n      #!/bin/bash\n      # keep\n      exit 0\nruncmd:\n  # gone\n"
+    assert(strip.strip_yaml(src) ==
+      "    content: |\n      #!/bin/bash\n      # keep\n      exit 0\nruncmd:\n\n")
+  end)
+
+  test("folded block scalar with chomping indicator is opaque", function ()
+    local src = "a: >-\n  # keep\nb: 1\n"
+    assert(strip.strip_yaml(src) == src)
+  end)
+
+  test("blank line inside block scalar does not end it", function ()
+    local src = "a: |\n  x\n\n  # keep\nb: 1\n"
+    assert(strip.strip_yaml(src) == src)
+  end)
+
+  test("greater-than inside a plain scalar is not an indicator", function ()
+    local out = strip.strip_yaml("cmd: echo a > b  # gone\n")
+    assert(out == "cmd: echo a > b\n")
+  end)
+
+end)
+
+test("strip_dockerfile", function ()
+
+  test("syntax and escape parser directives preserved", function ()
+    local src = "# syntax=docker/dockerfile:1\n# escape=`\nFROM alpine\n"
+    assert(strip.strip_dockerfile(src) == src)
+  end)
+
+  test("removes comment lines", function ()
+    local out = strip.strip_dockerfile("FROM alpine\n# gone\nRUN true\n")
+    assert(out == "FROM alpine\n\nRUN true\n")
+  end)
+
+  test("inline hash is not a comment", function ()
+    local src = "RUN echo a#b\n"
+    assert(strip.strip_dockerfile(src) == src)
+  end)
+
+  test("comment inside a line continuation removed", function ()
+    local out = strip.strip_dockerfile("RUN foo \\\n  # gone\n  bar\n")
+    assert(out == "RUN foo \\\n\n  bar\n")
+  end)
+
+  test("heredoc body is opaque", function ()
+    local src = "RUN <<EOF\n#!/bin/sh\n# keep\nEOF\n"
+    assert(strip.strip_dockerfile(src) == src)
+  end)
+
+  test("shift operator inside quotes is not a heredoc", function ()
+    local out = strip.strip_dockerfile("RUN echo \"a << b\"\n# gone\n")
+    assert(out == "RUN echo \"a << b\"\n\n")
+  end)
+
+end)
+
+test("strip_unit", function ()
+
+  test("removes hash and semicolon comment lines", function ()
+    local out = strip.strip_unit("[Unit]\n# gone\n; also gone\nDescription=x\n")
+    assert(out == "[Unit]\n\n\nDescription=x\n")
+  end)
+
+  test("inline hash and semicolon preserved", function ()
+    local src = "Environment=\"A=b#c;d\"\nExecStart=/bin/sh -c 'a; b'\n"
+    assert(strip.strip_unit(src) == src)
+  end)
+
+end)
+
+test("strip_conf hash boundary", function ()
+
+  test("mustache section tag preserved", function ()
+    local src = "  {{#nginx.dev_auth_secret}}\n  auth_basic off;\n  {{/nginx.dev_auth_secret}}\n"
+    assert(strip.strip_conf(src) == src)
+  end)
+
+  test("hash mid-token preserved", function ()
+    local src = "return 302 https://$host$request_uri#top;\n"
+    assert(strip.strip_conf(src) == src)
+  end)
+
+  test("comment beside a mustache tag still removed", function ()
+    local out = strip.strip_conf("  {{#a}} # gone\n")
+    assert(out == "  {{#a}}\n")
+  end)
+
+end)
+
+test("css has no line comments", function ()
+
+  test("double slash is not a comment", function ()
+    local src = "a { background: url(//cdn/x.png) }\n"
+    assert(strip.strip_css(src) == src)
+  end)
+
+end)
+
+test("html inside lua strings", function ()
+
+  test("html comment in a lua long string preserved", function ()
+    local src = "local page = [[<div><!-- keep --></div>]] -- gone\n"
+    assert(strip.strip_lua(src) == "local page = [[<div><!-- keep --></div>]]\n")
+  end)
+
+end)
+
+test("license headers", function ()
+
+  test("c block notice survives, code comments do not", function ()
+    local src = "/*\n** LPeg - PEG pattern matching for Lua\n" ..
+      "** Copyright 2007-2023, Lua.org & PUC-Rio  (see 'lpeg.html' for license)\n" ..
+      "** written by Roberto Ierusalimschy\n*/\n\nint x; // gone\n"
+    local out, bailed = strip.strip(src, "lptypes.h")
+    assert(not bailed)
+    assert(out == "/*\n** LPeg - PEG pattern matching for Lua\n" ..
+      "** Copyright 2007-2023, Lua.org & PUC-Rio  (see 'lpeg.html' for license)\n" ..
+      "** written by Roberto Ierusalimschy\n*/\n\nint x;\n")
+  end)
+
+  test("lua line-comment run survives whole, not just the marked line", function ()
+    local src = "--\n-- Copyright 2007-2023, Lua.org & PUC-Rio  (see 'lpeg.html' for license)\n" ..
+      "-- written by Roberto Ierusalimschy\n--\n\nlocal x = 1 -- gone\n"
+    local out, bailed = strip.strip(src, "grammar.lua")
+    assert(not bailed)
+    assert(out == "--\n-- Copyright 2007-2023, Lua.org & PUC-Rio  (see 'lpeg.html' for license)\n" ..
+      "-- written by Roberto Ierusalimschy\n--\n\nlocal x = 1\n")
+  end)
+
+  test("hash notice survives in shell after the shebang", function ()
+    local src = "#!/bin/sh\n# Copyright 2025 Someone\n# All rights reserved\n\necho a # gone\n"
+    local out = strip.strip(src, "x.sh")
+    assert(out == "#!/bin/sh\n# Copyright 2025 Someone\n# All rights reserved\n\necho a\n")
+  end)
+
+  test("permission notice without the word copyright survives", function ()
+    local src = "/* Permission is hereby granted, free of charge */\nint x; // gone\n"
+    assert(strip.strip(src, "a.c") == "/* Permission is hereby granted, free of charge */\nint x;\n")
+  end)
+
+  test("spdx identifier survives", function ()
+    local src = "// SPDX-License-Identifier: MIT\nint x; // gone\n"
+    assert(strip.strip(src, "a.c") == "// SPDX-License-Identifier: MIT\nint x;\n")
+  end)
+
+  test("ordinary head comment is still stripped", function ()
+    local src = "/* just a description */\nint x;\n"
+    assert(strip.strip(src, "a.c") == "\nint x;\n")
+  end)
+
+  test("head rule does not fire on a directive-only head", function ()
+    local src = "-- luacheck: push\nlocal x = 1 -- gone\n"
+    assert(strip.strip(src, "a.lua") == "-- luacheck: push\nlocal x = 1\n")
+  end)
+
+  test("losing a notice anywhere else bails instead of deleting it", function ()
+    local src = "int a;\n\n/* mid-file\n * Copyright 2010 Someone\n */\nint b;\n"
+    local out, bailed = strip.strip(src, "a.c")
+    assert(bailed)
+    assert(out == src)
+  end)
+
+  test("blank lines before the notice are tolerated", function ()
+    local src = "\n\n/* Copyright 2020 X */\nint y; // gone\n"
+    assert(strip.strip(src, "a.c") == "\n\n/* Copyright 2020 X */\nint y;\n")
+  end)
+
+end)
+
+test("coverage", function ()
+
+  test("known source is checked", function ()
+    assert(strip.coverage("x = 1\n", "a.lua") == "checked")
+    assert(strip.coverage("a # c\n", "a.sh") == "checked")
+    assert(strip.coverage("FROM a\n", "Dockerfile") == "checked")
+  end)
+
+  test("deliberately ignored types report ignored", function ()
+    assert(strip.coverage("{}\n", "a.json") == "ignored")
+    assert(strip.coverage("# Title\n", "a.md") == "ignored")
+    assert(strip.coverage("<svg/>\n", "a.svg") == "ignored")
+  end)
+
+  test("source we have no rule for reports unknown", function ()
+    assert(strip.coverage("select 1; -- c\n", "a.sql") == "unknown")
+    assert(strip.coverage("fn main() {}\n", "a.rs") == "unknown")
+    assert(strip.coverage("all:\n", "a.mk") == "unknown")
+  end)
+
+  test("templates are always checked", function ()
+    assert(strip.coverage("x <% y() %>\n", "a.tk.sql") == "checked")
+  end)
+
+  test("extensionless shebang is checked, without is unknown", function ()
+    assert(strip.coverage("#!/bin/bash\na\n", "bin/x") == "checked")
+    assert(strip.coverage("plain text\n", "bin/x") == "unknown")
+  end)
+
+end)
+
 test("strip dispatcher", function ()
 
   test("routes lua", function ()
@@ -463,6 +852,74 @@ test("strip dispatcher", function ()
     assert(strip.strip("x -- c\n", "a/b/foo.lua") == "x\n")
   end)
 
+  test("routes sh and bash", function ()
+    assert(strip.strip("a # c\n", "foo.sh") == "a\n")
+    assert(strip.strip("a # c\n", "foo.bash") == "a\n")
+  end)
+
+  test("routes tf and tfvars", function ()
+    assert(strip.strip("a = 1 # c\n", "main.tf") == "a = 1\n")
+    assert(strip.strip("a = 1 // c\n", "x.tfvars") == "a = 1\n")
+  end)
+
+  test("routes py", function ()
+    assert(strip.strip("x = 1 # c\n", "foo.py") == "x = 1\n")
+  end)
+
+  test("routes yml and yaml", function ()
+    assert(strip.strip("a: 1 # c\n", "foo.yml") == "a: 1\n")
+    assert(strip.strip("a: 1 # c\n", "foo.yaml") == "a: 1\n")
+  end)
+
+  test("routes dockerfile by extension and by basename", function ()
+    assert(strip.strip("FROM a\n# c\n", "deployment.dockerfile") == "FROM a\n\n")
+    assert(strip.strip("FROM a\n# c\n", "Dockerfile") == "FROM a\n\n")
+    assert(strip.strip("FROM a\n# c\n", "x/y/Dockerfile") == "FROM a\n\n")
+  end)
+
+  test("routes service and env", function ()
+    assert(strip.strip("[Unit]\n# c\n", "a.service") == "[Unit]\n\n")
+    assert(strip.strip("A=1 # c\n", "build.env") == "A=1\n")
+  end)
+
+  test("extensionless shell shebang routes to sh", function ()
+    assert(strip.strip("#!/bin/bash\na # c\n", "bin/deploy") == "#!/bin/bash\na\n")
+    assert(strip.strip("#!/usr/bin/env bash\na # c\n", "bin/deploy") ==
+      "#!/usr/bin/env bash\na\n")
+    assert(strip.strip("#!/data/data/com.termux/files/usr/bin/bash\na # c\n", "bin/x") ==
+      "#!/data/data/com.termux/files/usr/bin/bash\na\n")
+  end)
+
+  test("extensionless lua shebang routes to lua", function ()
+    local src = "#!/usr/bin/lua\nx = 1 -- c\n"
+    assert(strip.strip(src, "bin/git-subject") == "#!/usr/bin/lua\nx = 1\n")
+  end)
+
+  test("extensionless python shebang routes to py", function ()
+    local src = "#!/usr/bin/env python3\nx = 1 # c\n"
+    assert(strip.strip(src, "bin/yt-dlp") == "#!/usr/bin/env python3\nx = 1\n")
+  end)
+
+  test("extensionless without a shebang is a no-op", function ()
+    local src = "just # text\n"
+    assert(strip.strip(src, "bin/notes") == src)
+  end)
+
+  test("extensionless with an unknown shebang is a no-op", function ()
+    local src = "#!/usr/bin/perl\nx # c\n"
+    assert(strip.strip(src, "bin/thing") == src)
+  end)
+
+  test("tk sh routes to template with sh output", function ()
+    local src = "a # gone\n<% y() %>\n"
+    assert(strip.strip(src, "foo.tk.sh") == "a\n<% y() %>\n")
+  end)
+
+  test("tk conf keeps mustache tags", function ()
+    local src = "{{#a}} # gone\n<% y() %>\n"
+    assert(strip.strip(src, "nginx.tk.conf") == "{{#a}}\n<% y() %>\n")
+  end)
+
 end)
 
 test("subsequence safety on corpus shapes", function ()
@@ -471,6 +928,38 @@ test("subsequence safety on corpus shapes", function ()
     local src = "local skeleton = [[ <% return readfile(\"res/web/component.js\"), false %> ]]\n"
     local out = strip.strip(src, "component.tk.lua")
     assert(is_subseq(out, src))
+  end)
+
+  test("db.tk.lua directive sharing a line with an expression", function ()
+    local src = "local sub_migrations = <% return t_sub_migrations %> -- luacheck: ignore\n"
+    local out, bailed = strip.strip(src, "db.tk.lua")
+    assert(not bailed)
+    assert(out == src)
+  end)
+
+  test("db.tk.lua directive after a call expression", function ()
+    local src = "  migrate(db, <% return t_index_migrations %>) -- luacheck: ignore\n"
+    assert(strip.strip(src, "db.tk.lua") == src)
+  end)
+
+  test("index.tk.css import string spans a code block", function ()
+    local src = "@import \"<% return root_dir %>/res/tailwind/theme.css\";\n"
+    local out, bailed = strip.strip(src, "index.tk.css")
+    assert(not bailed)
+    assert(out == src)
+  end)
+
+  test("index.tk.css url in single quotes spans a code block", function ()
+    local src = "  src: url('/<% return hashed(\"roboto.woff2\") %>') format('woff2');\n"
+    local out, bailed = strip.strip(src, "index.tk.css")
+    assert(not bailed)
+    assert(out == src)
+  end)
+
+  test("serviceworker.tk.js shape keeps regex and template literals", function ()
+    local src = "const v = \"<% return api_version %>\";\nconst r = /a\\/b/g; // gone\n"
+    assert(strip.strip(src, "serviceworker.tk.js") ==
+      "const v = \"<% return api_version %>\";\nconst r = /a\\/b/g;\n")
   end)
 
 end)
