@@ -810,6 +810,50 @@ test("blank line collapsing", function ()
 
 end)
 
+test("empty template blocks", function ()
+
+  test("comment-only block on its own line disappears entirely", function ()
+    local out = strip.strip_template("a = 1\n<% -- gone %>\nb = 2\n", "lua")
+    assert(out == "a = 1\nb = 2\n")
+  end)
+
+  test("indented comment-only block disappears entirely", function ()
+    local out = strip.strip_template("a;\n  <% -- gone %>  \nb;\n", "c")
+    assert(out == "a;\nb;\n")
+  end)
+
+  test("a block that was already empty is dropped too", function ()
+    assert(strip.strip_template("a = 1\n<%%>\nb = 2\n", "lua") == "a = 1\nb = 2\n")
+  end)
+
+  test("multiline comment-only block disappears", function ()
+    local src = "a = 1\n<%\n  -- one\n  -- two\n%>\nb = 2\n"
+    assert(strip.strip_template(src, "lua") == "a = 1\nb = 2\n")
+  end)
+
+  test("block with real code is kept", function ()
+    local src = "a = 1\n<% return v %>\nb = 2\n"
+    assert(strip.strip_template(src, "lua") == src)
+  end)
+
+  test("block keeping code but losing a comment stays", function ()
+    local out = strip.strip_template("<% return v -- gone %>\n", "lua")
+    assert(out == "<% return v%>\n")
+  end)
+
+  test("inline comment-only block leaves surrounding text", function ()
+    local out = strip.strip_template("x = <% -- gone %> y\n", "lua")
+    assert(out == "x =  y\n")
+  end)
+
+  test("no empty block residue is ever emitted", function ()
+    local out = strip.strip_template("a\n<% -- x %>\n<% -- y %>\nb\n", "lua")
+    assert(not out:find("<%%s*%%>"))
+    assert(out == "a\nb\n")
+  end)
+
+end)
+
 test("tk directive and suffix form", function ()
 
   test("dot-tk suffix routes to template with the prior extension", function ()

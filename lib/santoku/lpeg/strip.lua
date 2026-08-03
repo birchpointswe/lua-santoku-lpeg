@@ -1480,11 +1480,15 @@ local function strip_template (src, output_lang)
         out[#out + 1] = sub(src, pos)
         pos = len + 1
       else
-        local code = sub(src, p, close - 1)
-        out[#out + 1] = "<%"
-        out[#out + 1] = (strip_lua(code))
-        out[#out + 1] = "%>"
-        pos = close + 2
+        local code = (strip_lua(sub(src, p, close - 1)))
+        if find(code, "^%s*$") then
+          pos = after_comment(src, pos, close + 2, out)
+        else
+          out[#out + 1] = "<%"
+          out[#out + 1] = code
+          out[#out + 1] = "%>"
+          pos = close + 2
+        end
       end
     else
       local seg_end = find(src, "<%", pos, true)
