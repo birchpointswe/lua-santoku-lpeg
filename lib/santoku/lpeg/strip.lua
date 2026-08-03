@@ -1,3 +1,9 @@
+local lpeg = require("santoku.re.core")
+
+local P, S, Cc, Cp, Ct = lpeg.P, lpeg.S, lpeg.Cc, lpeg.Cp, lpeg.Ct
+local Cmt, B, C, Cg, Cb, R = lpeg.Cmt, lpeg.B, lpeg.C, lpeg.Cg, lpeg.Cb, lpeg.R
+local lmatch = lpeg.match
+
 local byte = string.byte
 local sub = string.sub
 local find = string.find
@@ -104,222 +110,128 @@ local function after_comment (src, cstart, pos, out)
   return p
 end
 
-local function long_bracket_open (src, pos)
-  if byte(src, pos) ~= 91 then return nil end
-  local p = pos + 1
-  local level = 0
-  while byte(src, p) == 61 do
-    level = level + 1
-    p = p + 1
-  end
-  if byte(src, p) == 91 then
-    return level, p + 1
-  end
-  return nil
-end
-
-local function long_bracket_close (src, pos, level)
-  if byte(src, pos) ~= 93 then return nil end
-  local p = pos + 1
-  local n = 0
-  while byte(src, p) == 61 do
-    n = n + 1
-    p = p + 1
-  end
-  if n == level and byte(src, p) == 93 then
-    return p + 1
-  end
-  return nil
-end
+local drive_grammar
+local lua_grammar
+local html_grammar
+local js_grammar
+local gpend, gbail, glast
+local hd_delim, hd_end
 
 local function strip_lua (src)
-  local out = {}
-  local pos = 1
-  local len = #src
-  local bailed = false
-  while pos <= len do
-    local b = byte(src, pos)
-    if b == 45 and byte(src, pos + 1) == 45 then
-      local cs = pos + 2
-      local level, after = long_bracket_open(src, cs)
-      if level then
-        local p = after
-        local closed = nil
-        while p <= len do
-          local e = long_bracket_close(src, p, level)
-          if e then closed = e; break end
-          p = p + 1
-        end
-        if closed then
-          pos = after_comment(src, pos, closed, out)
-        else
-          out[#out + 1] = sub(src, pos)
-          pos = len + 1
-        end
-      else
-        local txt_start = ws_after(src, cs)
-        local rest = sub(src, txt_start)
-        if find(rest, "^luacheck:") or find(rest, "^luacov:") or find(rest, "^tk:") then
-          local nl = find(src, "\n", pos, true)
-          if nl then
-            out[#out + 1] = sub(src, pos, nl - 1)
-            pos = nl
-          else
-            out[#out + 1] = sub(src, pos)
-            pos = len + 1
-          end
-        else
-          local nl = find(src, "\n", cs, true)
-          pos = after_comment(src, pos, nl or (len + 1), out)
-        end
-      end
-    elseif b == 34 or b == 39 then
-      local q = b
-      local start = pos
-      pos = pos + 1
-      while pos <= len do
-        local c = byte(src, pos)
-        if c == 92 then
-          pos = pos + 2
-        elseif c == q then
-          pos = pos + 1
-          break
-        elseif c == 10 then
-          break
-        else
-          pos = pos + 1
-        end
-      end
-      out[#out + 1] = sub(src, start, pos - 1)
-    elseif b == 91 then
-      local level, after = long_bracket_open(src, pos)
-      if level then
-        local start = pos
-        local p = after
-        local closed = nil
-        while p <= len do
-          local e = long_bracket_close(src, p, level)
-          if e then closed = e; break end
-          p = p + 1
-        end
-        if closed then
-          out[#out + 1] = sub(src, start, closed - 1)
-          pos = closed
-        else
-          out[#out + 1] = sub(src, start)
-          pos = len + 1
-        end
-      else
-        out[#out + 1] = sub(src, pos, pos)
-        pos = pos + 1
-      end
-    else
-      out[#out + 1] = sub(src, pos, pos)
-      pos = pos + 1
-    end
-  end
-  return guard(concat(out), src, bailed)
+  return drive_grammar(lua_grammar, src)
 end
 
 local c_directives = { "tk:", "NOLINT", "clang-format", "@ts-", "IWYU pragma:", "NOSONAR" }
 
-local function has_directive (src, pos, list)
-  local p = ws_after(src, pos)
-  local rest = sub(src, p)
-  for i = 1, #list do
-    if find(rest, list[i], 1, true) == 1 then
-      return true
-    end
+local tmpl_open = P("<%")
+local tmpl_block = tmpl_open * (P(1) - P("%>")) ^ 0 * (P("%>") + P(true))
+
+local function tokenizer (rules, interesting, t)
+  local alt = P(false)
+  for i = 1, #rules do
+    alt = alt + Ct(Cc(rules[i][2]) * Cp() * rules[i][1] * Cp())
   end
-  return false
+  local one = t and (P(1) - tmpl_open) or P(1)
+  alt = alt + Ct(Cc("code") * Cp() * ((one - S(interesting)) ^ 1) * Cp())
+  alt = alt + Ct(Cc("code") * Cp() * P(1) * Cp())
+  return Ct(alt ^ 0)
 end
 
-local function strip_c_line (src, pos, len, out)
-  local start = pos
-  pos = pos + 2
-  while pos <= len do
-    local c = byte(src, pos)
-    if c == 10 then
-      break
-    elseif c == 92 then
-      if byte(src, pos + 1) == 10 then
-        pos = pos + 2
-      elseif byte(src, pos + 1) == 13 and byte(src, pos + 2) == 10 then
-        pos = pos + 3
-      else
-        pos = pos + 1
-      end
-    else
-      pos = pos + 1
-    end
-  end
-  if has_directive(src, start + 2, c_directives) then
-    out[#out + 1] = sub(src, start, pos - 1)
-    return pos
-  end
-  return after_comment(src, start, pos, out)
-end
-
-local function strip_c_block (src, pos, len, out)
-  local start = pos
-  local p = pos + 2
-  local closed = nil
-  while p <= len do
-    if byte(src, p) == 42 and byte(src, p + 1) == 47 then
-      closed = p + 2
-      break
-    end
-    p = p + 1
-  end
-  if not closed then
-    out[#out + 1] = sub(src, start)
-    return len + 1
-  end
-  if has_directive(src, start + 2, c_directives) then
-    out[#out + 1] = sub(src, start, closed - 1)
-    return closed
-  end
-  return after_comment(src, start, closed, out)
-end
-
-local function copy_c_string (src, pos, len, out, q)
-  local start = pos
-  pos = pos + 1
-  while pos <= len do
-    local c = byte(src, pos)
-    if c == 92 then
-      pos = pos + 2
-    elseif c == q then
-      pos = pos + 1
-      break
-    elseif c == 10 then
-      break
-    else
-      pos = pos + 1
-    end
-  end
-  out[#out + 1] = sub(src, start, pos - 1)
-  return pos
-end
-
-local function strip_c (src)
+local function render (src, toks)
   local out = {}
   local pos = 1
-  local len = #src
-  while pos <= len do
-    local b = byte(src, pos)
-    if b == 47 and byte(src, pos + 1) == 47 then
-      pos = strip_c_line(src, pos, len, out)
-    elseif b == 47 and byte(src, pos + 1) == 42 then
-      pos = strip_c_block(src, pos, len, out)
-    elseif b == 34 or b == 39 then
-      pos = copy_c_string(src, pos, len, out, b)
-    else
-      out[#out + 1] = sub(src, pos, pos)
-      pos = pos + 1
+  for i = 1, #toks do
+    local t = toks[i]
+    local kind, s, e = t[1], t[2], t[3]
+    if e > pos then
+      if kind == "comment" and s >= pos then
+        pos = after_comment(src, s, e, out)
+      else
+        out[#out + 1] = sub(src, s < pos and pos or s, e - 1)
+        pos = e
+      end
     end
   end
-  return guard(concat(out), src, false)
+  return concat(out)
+end
+
+local function grammar_toks (patt, src)
+  gpend = {}
+  gbail = false
+  glast = nil
+  local toks = lmatch(patt, src)
+  if not toks or gbail then return nil end
+  return toks
+end
+
+drive_grammar = function (patt, src)
+  local toks = grammar_toks(patt, src)
+  if not toks then return src, true end
+  return guard(render(src, toks), src, false)
+end
+
+local function dir_ahead (list)
+  local alt = P(false)
+  for i = 1, #list do
+    alt = alt + P(list[i])
+  end
+  return S(" \t") ^ 0 * alt
+end
+
+local esc_any = P("\\") * P(1)
+
+local function quoted (q)
+  return P(q) * (esc_any + (P(1) - S(q .. "\n"))) ^ 0 * (P(q) + P(true))
+end
+
+local tline_body = (P(1) - P("\n") - tmpl_open) ^ 0
+
+local function tquoted (q, esc, nl)
+  local body = P(1) - (nl and S(q .. "\n") or P(q))
+  if esc then body = esc_any + body end
+  return P(q) * (tmpl_block + body) ^ 0 * (P(q) + P(true))
+end
+
+local function tbody (close, cut)
+  local body = P(1) - P(close)
+  if cut then body = body - tmpl_open end
+  return body ^ 0 * (P(close) + P(true))
+end
+
+local function skip_blk (s, q, len)
+  local e = find(s, "%>", q + 2, true)
+  return e and (e + 2) or (len + 1)
+end
+
+local c_cont = P("\\") * (P("\r\n") + P("\n"))
+local c_line_body = (c_cont + (P(1) - P("\n"))) ^ 0
+local c_dir = dir_ahead(c_directives)
+
+local c_grammar = tokenizer({
+  { P("//") * #c_dir * c_line_body, "code" },
+  { P("//") * c_line_body, "comment" },
+  { P("/*") * #c_dir * (P(1) - P("*/")) ^ 0 * P("*/"), "code" },
+  { P("/*") * (P(1) - P("*/")) ^ 0 * P("*/"), "comment" },
+  { P("/*") * #c_dir * P(1) ^ 0, "code" },
+  { P("/*") * P(1) ^ 0, "opaque" },
+  { quoted("\""), "code" },
+  { quoted("'"), "code" },
+}, "/\"'")
+
+local c_tline = (c_cont + (P(1) - P("\n") - tmpl_open)) ^ 0
+
+local c_tgrammar = tokenizer({
+  { tmpl_block, "code" },
+  { P("//") * #c_dir * c_tline, "code" },
+  { P("//") * c_tline, "comment" },
+  { P("/*") * #c_dir * tbody("*/", true), "code" },
+  { P("/*") * tbody("*/"), "comment" },
+  { tquoted("\"", true, false), "code" },
+  { tquoted("'", true, false), "code" },
+}, "/\"'", true)
+
+local function strip_c (src)
+  return drive_grammar(c_grammar, src)
 end
 
 local js_keywords = {
@@ -340,277 +252,36 @@ local function js_regex_allowed (last)
   return true
 end
 
-local function copy_js_string (src, pos, len, out, q)
-  local start = pos
-  pos = pos + 1
-  while pos <= len do
-    local c = byte(src, pos)
-    if c == 92 then
-      pos = pos + 2
-    elseif c == q then
-      pos = pos + 1
-      break
-    else
-      pos = pos + 1
-    end
-  end
-  out[#out + 1] = sub(src, start, pos - 1)
-  return pos
-end
-
-local function copy_js_template (src, pos, len, out)
-  local start = pos
-  pos = pos + 1
-  local depth = 0
-  while pos <= len do
-    local c = byte(src, pos)
-    if c == 92 then
-      pos = pos + 2
-    elseif c == 96 and depth == 0 then
-      pos = pos + 1
-      break
-    elseif c == 36 and byte(src, pos + 1) == 123 then
-      depth = depth + 1
-      pos = pos + 2
-    elseif c == 125 and depth > 0 then
-      depth = depth - 1
-      pos = pos + 1
-    else
-      pos = pos + 1
-    end
-  end
-  out[#out + 1] = sub(src, start, pos - 1)
-  return pos
-end
-
-local function copy_js_regex (src, pos, len, out)
-  local start = pos
-  pos = pos + 1
-  local in_class = false
-  while pos <= len do
-    local c = byte(src, pos)
-    if c == 92 then
-      pos = pos + 2
-    elseif c == 91 then
-      in_class = true
-      pos = pos + 1
-    elseif c == 93 then
-      in_class = false
-      pos = pos + 1
-    elseif c == 47 and not in_class then
-      pos = pos + 1
-      break
-    elseif c == 10 then
-      break
-    else
-      pos = pos + 1
-    end
-  end
-  while pos <= len and is_ident_ch(byte(src, pos)) do
-    pos = pos + 1
-  end
-  out[#out + 1] = sub(src, start, pos - 1)
-  return pos
-end
-
 local js_directives = { "tk:", "@ts-", "NOLINT", "clang-format", "eslint", "istanbul", "prettier", "c8", "webpack" }
 
-local function strip_js_line (src, pos, len, out)
-  local start = pos
-  pos = pos + 2
-  while pos <= len and byte(src, pos) ~= 10 do
-    pos = pos + 1
-  end
-  if has_directive(src, start + 2, js_directives) then
-    out[#out + 1] = sub(src, start, pos - 1)
-    return pos
-  end
-  return after_comment(src, start, pos, out)
-end
-
-local function strip_js_block (src, pos, len, out)
-  local start = pos
-  local p = pos + 2
-  local closed = nil
-  while p <= len do
-    if byte(src, p) == 42 and byte(src, p + 1) == 47 then
-      closed = p + 2
-      break
-    end
-    p = p + 1
-  end
-  if not closed then
-    out[#out + 1] = sub(src, start)
-    return len + 1
-  end
-  if has_directive(src, start + 2, js_directives) then
-    out[#out + 1] = sub(src, start, closed - 1)
-    return closed
-  end
-  return after_comment(src, start, closed, out)
-end
-
 local function strip_js (src)
-  local out = {}
-  local pos = 1
-  local len = #src
-  local last = nil
-  while pos <= len do
-    local b = byte(src, pos)
-    if b == 47 and byte(src, pos + 1) == 47 then
-      pos = strip_js_line(src, pos, len, out)
-      last = nil
-    elseif b == 47 and byte(src, pos + 1) == 42 then
-      pos = strip_js_block(src, pos, len, out)
-      last = nil
-    elseif b == 47 then
-      if js_regex_allowed(last) then
-        pos = copy_js_regex(src, pos, len, out)
-        last = "\1"
-      else
-        out[#out + 1] = "/"
-        pos = pos + 1
-        last = "/"
-      end
-    elseif b == 34 or b == 39 then
-      pos = copy_js_string(src, pos, len, out, b)
-      last = "\1"
-    elseif b == 96 then
-      pos = copy_js_template(src, pos, len, out)
-      last = "\1"
-    elseif is_ident_ch(b) then
-      local start = pos
-      while pos <= len and is_ident_ch(byte(src, pos)) do
-        pos = pos + 1
-      end
-      last = sub(src, start, pos - 1)
-      out[#out + 1] = last
-    elseif b == 32 or b == 9 or b == 10 or b == 13 then
-      out[#out + 1] = sub(src, pos, pos)
-      pos = pos + 1
-    else
-      out[#out + 1] = sub(src, pos, pos)
-      last = sub(src, pos, pos)
-      pos = pos + 1
-    end
-  end
-  return guard(concat(out), src, false)
+  return drive_grammar(js_grammar, src)
 end
+
+local css_grammar = tokenizer({
+  { P("/*") * (P(1) - P("*/")) ^ 0 * P("*/"), "comment" },
+  { P("/*") * P(1) ^ 0, "opaque" },
+  { quoted("\""), "code" },
+  { quoted("'"), "code" },
+}, "/\"'")
+
+local css_tgrammar = tokenizer({
+  { tmpl_block, "code" },
+  { P("/*") * tbody("*/"), "comment" },
+  { tquoted("\"", true, true), "code" },
+  { tquoted("'", true, true), "code" },
+}, "/\"'", true)
 
 local function strip_css (src)
-  local out = {}
-  local pos = 1
-  local len = #src
-  while pos <= len do
-    local b = byte(src, pos)
-    if b == 47 and byte(src, pos + 1) == 42 then
-      local p = pos + 2
-      local closed = nil
-      while p <= len do
-        if byte(src, p) == 42 and byte(src, p + 1) == 47 then
-          closed = p + 2
-          break
-        end
-        p = p + 1
-      end
-      if not closed then
-        out[#out + 1] = sub(src, pos)
-        pos = len + 1
-      else
-        pos = after_comment(src, pos, closed, out)
-      end
-    elseif b == 34 or b == 39 then
-      pos = copy_c_string(src, pos, len, out, b)
-    else
-      out[#out + 1] = sub(src, pos, pos)
-      pos = pos + 1
-    end
-  end
-  return guard(concat(out), src, false)
+  return drive_grammar(css_grammar, src)
 end
 
 local function strip_html (src)
-  local out = {}
-  local pos = 1
-  local len = #src
-  while pos <= len do
-    if byte(src, pos) == 60 and byte(src, pos + 1) == 33 and
-       byte(src, pos + 2) == 45 and byte(src, pos + 3) == 45 then
-      local p = pos + 4
-      local closed = nil
-      while p <= len do
-        if byte(src, p) == 45 and byte(src, p + 1) == 45 and byte(src, p + 2) == 62 then
-          closed = p + 3
-          break
-        end
-        p = p + 1
-      end
-      if not closed then
-        out[#out + 1] = sub(src, pos)
-        pos = len + 1
-      else
-        pos = after_comment(src, pos, closed, out)
-      end
-    else
-      local next_lt = find(src, "<", pos, true)
-      local text_end = next_lt and (next_lt - 1) or len
-      if text_end < pos then
-        out[#out + 1] = sub(src, pos, pos)
-        pos = pos + 1
-      else
-        out[#out + 1] = sub(src, pos, text_end)
-        pos = text_end + 1
-      end
-    end
-  end
-  return guard(concat(out), src, false)
-end
-
-local function drive (step, src)
-  local out = {}
-  local pos = 1
-  local len = #src
-  local st = nil
-  while pos <= len do
-    local np, emit_end, stripped, nst, bail = step(src, pos, len, st)
-    if bail then return src, true end
-    if stripped then
-      np = after_comment(src, pos, np, out)
-    elseif emit_end >= pos then
-      out[#out + 1] = sub(src, pos, emit_end)
-    end
-    pos = np
-    st = nst
-  end
-  return guard(concat(out), src, false)
+  return drive_grammar(html_grammar, src)
 end
 
 local function is_alpha_us (b)
   return b and ((b >= 65 and b <= 90) or (b >= 97 and b <= 122) or b == 95)
-end
-
-local function at_word_start (src, pos)
-  if pos <= 1 then return true end
-  local b = byte(src, pos - 1)
-  return b == 32 or b == 9 or b == 10 or b == 13
-end
-
-local function at_line_start (src, pos)
-  local p = pos - 1
-  while p >= 1 do
-    local b = byte(src, p)
-    if b == 32 or b == 9 then p = p - 1
-    elseif b == 10 or b == 13 then return true
-    else return false end
-  end
-  return true
-end
-
-local function is_shebang (src, pos)
-  if byte(src, pos) ~= 35 or byte(src, pos + 1) ~= 33 then return false end
-  if pos == 1 then return true end
-  local nl = find(src, "\n", 1, true)
-  return nl ~= nil and pos == nl + 1
 end
 
 local function line_indent (src, pos)
@@ -624,7 +295,7 @@ local function line_indent (src, pos)
   return n
 end
 
-local function hd_delim (src, pos, len)
+hd_delim = function (src, pos, len)
   if byte(src, pos + 2) == 60 then return nil end
   local p = pos + 2
   local dash = false
@@ -647,7 +318,7 @@ local function hd_delim (src, pos, len)
   return { delim = sub(src, s, p - 1), dash = dash }, p
 end
 
-local function hd_end (src, ls, le, hd, anyws)
+hd_end = function (src, ls, le, hd, anyws)
   local p = ls
   if hd.dash then
     while p <= le do
@@ -666,412 +337,406 @@ local function hd_end (src, ls, le, hd, anyws)
   return true
 end
 
-local function hd_pop (st)
-  local nst = { pend = {} }
-  if st.pend then
-    nst.hd = st.pend[1]
-    for i = 2, #st.pend do nst.pend[i - 1] = st.pend[i] end
-  end
-  return nst
-end
-
-local function hd_push (st, hd)
-  local pend = {}
-  if st.pend then
-    for i = 1, #st.pend do pend[i] = st.pend[i] end
-  end
-  pend[#pend + 1] = hd
-  return { pend = pend }
-end
-
-local function hd_body (src, pos, stop, st, anyws)
-  local p = pos
-  while p <= stop do
-    local nl = find(src, "\n", p, true)
-    if not nl or nl > stop then break end
-    if hd_end(src, p, nl - 1, st.hd, anyws) then
-      return nl + 1, nl, false, hd_pop(st), nil, true
-    end
-    p = nl + 1
-  end
-  if stop >= #src then
-    if p <= stop and hd_end(src, p, stop, st.hd, anyws) then
-      return stop + 1, stop, false, hd_pop(st), nil, true
-    end
-    return stop + 1, stop, false, st, true
-  end
-  return stop + 1, stop, false, st, nil, true
-end
-
-local function hd_newline (pos, st)
-  if st.pend and #st.pend > 0 then
-    return pos + 1, pos, false, hd_pop(st)
-  end
-  return pos + 1, pos, false, st
-end
-
-local function line_end (src, pos, stop)
-  local nl = find(src, "\n", pos, true)
-  if nl and nl <= stop then return nl - 1 end
-  return stop
-end
-
 local sh_directives = { "tk:", "shellcheck", "noqa", "type:", "pylint", "mypy", "fmt:", "pragma:" }
-
-local function step_sh (src, pos, stop, st)
-  st = st or {}
-  if st.hd then return hd_body(src, pos, stop, st, false) end
-  if st.q then
-    local q, esc = st.q, st.esc
-    local p = pos
-    while p <= stop do
-      local c = byte(src, p)
-      if esc and c == 92 then p = p + 2
-      elseif c == q then return p + 1, p, false, { pend = st.pend }, nil, true
-      else p = p + 1 end
-    end
-    return stop + 1, stop, false, st, nil, true
-  end
-  if st.arith then
-    local d = st.arith
-    local p = pos
-    while p <= stop do
-      local c = byte(src, p)
-      if c == 40 then d = d + 1
-      elseif c == 41 then
-        d = d - 1
-        if d == 0 then return p + 1, p, false, { pend = st.pend } end
-      end
-      p = p + 1
-    end
-    return stop + 1, stop, false, { pend = st.pend, arith = d }
-  end
-  local b = byte(src, pos)
-  if b == 35 and at_word_start(src, pos) then
-    local last = line_end(src, pos, stop)
-    if is_shebang(src, pos) or has_directive(src, pos + 1, sh_directives) then
-      return last + 1, last, false, st
-    end
-    return last + 1, pos - 1, true, st
-  elseif b == 39 or b == 34 or b == 96 then
-    local esc = b ~= 39
-    local p = pos + 1
-    while p <= stop do
-      local c = byte(src, p)
-      if esc and c == 92 then p = p + 2
-      elseif c == b then return p + 1, p, false, { pend = st.pend }, nil, true
-      else p = p + 1 end
-    end
-    return stop + 1, stop, false, { pend = st.pend, q = b, esc = esc }, nil, true
-  elseif b == 92 then
-    local last = pos + 1 <= stop and pos + 1 or stop
-    return last + 1, last, false, st
-  elseif b == 36 and byte(src, pos + 1) == 40 and byte(src, pos + 2) == 40 then
-    return pos + 3, pos + 2, false, { pend = st.pend, arith = 2 }
-  elseif b == 40 and byte(src, pos + 1) == 40 and at_word_start(src, pos) then
-    return pos + 2, pos + 1, false, { pend = st.pend, arith = 2 }
-  elseif b == 60 and byte(src, pos + 1) == 60 then
-    local hd, np = hd_delim(src, pos, #src)
-    if hd then
-      if np > stop + 1 then np = stop + 1 end
-      return np, np - 1, false, hd_push(st, hd)
-    end
-    local last = pos + 1 <= stop and pos + 1 or stop
-    return last + 1, last, false, st
-  elseif b == 10 then
-    return hd_newline(pos, st)
-  end
-  local nxt = find(src, "[#'\"`$<\\\n(]", pos + 1)
-  local last = (nxt and nxt <= stop) and (nxt - 1) or stop
-  return last + 1, last, false, st
-end
-
-local function step_hcl (src, pos, stop, st)
-  st = st or {}
-  if st.hd then return hd_body(src, pos, stop, st, true) end
-  if st.q then
-    local p = pos
-    while p <= stop do
-      local c = byte(src, p)
-      if c == 92 then p = p + 2
-      elseif c == 34 then return p + 1, p, false, { pend = st.pend }
-      elseif c == 10 then return p, p - 1, false, { pend = st.pend }
-      else p = p + 1 end
-    end
-    return stop + 1, stop, false, st
-  end
-  if st.cmt then
-    local p = pos
-    while p <= stop do
-      if byte(src, p) == 42 and byte(src, p + 1) == 47 then
-        return p + 2, pos - 1, true, { pend = st.pend }
-      end
-      p = p + 1
-    end
-    return stop + 1, pos - 1, true, st
-  end
-  local b = byte(src, pos)
-  if b == 35 or (b == 47 and byte(src, pos + 1) == 47) then
-    local last = line_end(src, pos, stop)
-    return last + 1, pos - 1, true, st
-  elseif b == 47 and byte(src, pos + 1) == 42 then
-    local p = pos + 2
-    while p <= stop do
-      if byte(src, p) == 42 and byte(src, p + 1) == 47 then
-        return p + 2, pos - 1, true, st
-      end
-      p = p + 1
-    end
-    return stop + 1, pos - 1, true, { pend = st.pend, cmt = true }
-  elseif b == 34 then
-    local p = pos + 1
-    while p <= stop do
-      local c = byte(src, p)
-      if c == 92 then p = p + 2
-      elseif c == 34 then return p + 1, p, false, { pend = st.pend }
-      elseif c == 10 then return p, p - 1, false, { pend = st.pend }
-      else p = p + 1 end
-    end
-    return stop + 1, stop, false, { pend = st.pend, q = 34 }
-  elseif b == 60 and byte(src, pos + 1) == 60 then
-    local hd, np = hd_delim(src, pos, #src)
-    if hd then
-      if np > stop + 1 then np = stop + 1 end
-      return np, np - 1, false, hd_push(st, hd)
-    end
-    local last = pos + 1 <= stop and pos + 1 or stop
-    return last + 1, last, false, st
-  elseif b == 10 then
-    return hd_newline(pos, st)
-  end
-  local nxt = find(src, "[#/\"<\n]", pos + 1)
-  local last = (nxt and nxt <= stop) and (nxt - 1) or stop
-  return last + 1, last, false, st
-end
 
 local py_directives = {
   "tk:", "noqa", "type:", "pylint", "mypy", "fmt:", "pragma:", "-*-", "coding=", "coding:",
 }
 
-local function py_string (src, stop, q, n, from)
-  local p = from
-  while p <= stop do
-    local c = byte(src, p)
-    if c == 92 then p = p + 2
-    elseif c == q then
-      if n == 1 then return p + 1, p, false, nil end
-      if byte(src, p + 1) == q and byte(src, p + 2) == q then
-        return p + 3, p + 2, false, nil, nil, true
-      end
-      p = p + 1
-    elseif c == 10 and n == 1 then
-      return p, p - 1, false, nil
-    else p = p + 1 end
-  end
-  return stop + 1, stop, false, { q = q, n = n }, nil, n == 3
-end
-
-local function step_python (src, pos, stop, st)
-  if st and st.q then
-    return py_string(src, stop, st.q, st.n, pos)
-  end
-  local b = byte(src, pos)
-  if b == 35 then
-    local last = line_end(src, pos, stop)
-    if is_shebang(src, pos) or has_directive(src, pos + 1, py_directives) then
-      return last + 1, last, false, nil
-    end
-    return last + 1, pos - 1, true, nil
-  elseif b == 34 or b == 39 then
-    if byte(src, pos + 1) == b and byte(src, pos + 2) == b then
-      return py_string(src, stop, b, 3, pos + 3)
-    end
-    return py_string(src, stop, b, 1, pos + 1)
-  end
-  local nxt = find(src, "[#'\"]", pos + 1)
-  local last = (nxt and nxt <= stop) and (nxt - 1) or stop
-  return last + 1, last, false, nil
-end
-
 local yaml_directives = {
   "tk:", "cloud-config", "yaml-language-server:", "noqa", "type:", "fmt:", "pragma:", "shellcheck",
 }
 
-local function yaml_block (src, pos, stop, st)
-  local p = pos
-  while p <= stop do
-    local nl = find(src, "\n", p, true)
-    local le = nl and (nl - 1) or stop
-    local q = p
-    local n = 0
-    while q <= le and byte(src, q) == 32 do
-      n = n + 1
-      q = q + 1
-    end
-    local blank = q > le or byte(src, q) == 13
-    if not blank and n <= st.blk then
-      return p, p - 1, false, nil, nil, true
-    end
-    if not nl or nl > stop then break end
-    p = nl + 1
-  end
-  return stop + 1, stop, false, st, nil, true
-end
-
-local function yaml_indicator (src, pos, stop)
-  local p = pos + 1
-  while p <= stop do
-    local c = byte(src, p)
-    if c == 43 or c == 45 or (c >= 48 and c <= 57) then p = p + 1 else break end
-  end
-  while p <= stop do
-    local c = byte(src, p)
-    if c == 32 or c == 9 or c == 13 then p = p + 1 else break end
-  end
-  return p > stop or byte(src, p) == 10
-end
-
-local function step_yaml (src, pos, stop, st)
-  if st and st.blk then return yaml_block(src, pos, stop, st) end
-  if st and st.q then
-    local q = st.q
-    local p = pos
-    while p <= stop do
-      local c = byte(src, p)
-      if q == 34 and c == 92 then p = p + 2
-      elseif c == q then
-        if q == 39 and byte(src, p + 1) == 39 then p = p + 2
-        else return p + 1, p, false, nil end
-      else p = p + 1 end
-    end
-    return stop + 1, stop, false, st
-  end
-  local b = byte(src, pos)
-  if b == 35 and at_word_start(src, pos) then
-    local last = line_end(src, pos, stop)
-    if is_shebang(src, pos) or has_directive(src, pos + 1, yaml_directives) then
-      return last + 1, last, false, nil
-    end
-    return last + 1, pos - 1, true, nil
-  elseif b == 34 or b == 39 then
-    local p = pos + 1
-    while p <= stop do
-      local c = byte(src, p)
-      if b == 34 and c == 92 then p = p + 2
-      elseif c == b then
-        if b == 39 and byte(src, p + 1) == 39 then p = p + 2
-        else return p + 1, p, false, nil end
-      else p = p + 1 end
-    end
-    return stop + 1, stop, false, { q = b }
-  elseif (b == 124 or b == 62) and at_word_start(src, pos) and
-         yaml_indicator(src, pos, stop) then
-    local indent = line_indent(src, pos)
-    local nl = find(src, "\n", pos, true)
-    if not nl or nl > stop then
-      return stop + 1, stop, false, nil
-    end
-    return nl + 1, nl, false, { blk = indent }
-  end
-  local nxt = find(src, "[#\"'|>]", pos + 1)
-  local last = (nxt and nxt <= stop) and (nxt - 1) or stop
-  return last + 1, last, false, nil
-end
-
 local docker_directives = { "tk:", "syntax=", "escape=", "check=" }
-
-local function step_dockerfile (src, pos, stop, st)
-  st = st or {}
-  if st.hd then return hd_body(src, pos, stop, st, true) end
-  local b = byte(src, pos)
-  if b == 35 and at_line_start(src, pos) then
-    local last = line_end(src, pos, stop)
-    if has_directive(src, pos + 1, docker_directives) then
-      return last + 1, last, false, st
-    end
-    return last + 1, pos - 1, true, st
-  elseif b == 34 or b == 39 then
-    local p = pos + 1
-    while p <= stop do
-      local c = byte(src, p)
-      if b == 34 and c == 92 then p = p + 2
-      elseif c == b then return p + 1, p, false, st
-      elseif c == 10 then return p, p - 1, false, st
-      else p = p + 1 end
-    end
-    return stop + 1, stop, false, st
-  elseif b == 60 and byte(src, pos + 1) == 60 then
-    local hd, np = hd_delim(src, pos, #src)
-    if hd then
-      if np > stop + 1 then np = stop + 1 end
-      return np, np - 1, false, hd_push(st, hd)
-    end
-    local last = pos + 1 <= stop and pos + 1 or stop
-    return last + 1, last, false, st
-  elseif b == 10 then
-    return hd_newline(pos, st)
-  end
-  local nxt = find(src, "[#\"'<\n]", pos + 1)
-  local last = (nxt and nxt <= stop) and (nxt - 1) or stop
-  return last + 1, last, false, st
-end
-
-local function step_unit (src, pos, stop, _st)
-  local b = byte(src, pos)
-  if (b == 35 or b == 59) and at_line_start(src, pos) then
-    local last = line_end(src, pos, stop)
-    return last + 1, pos - 1, true, nil
-  end
-  local nxt = find(src, "[#;]", pos + 1)
-  local last = (nxt and nxt <= stop) and (nxt - 1) or stop
-  return last + 1, last, false, nil
-end
 
 local conf_directives = { "tk:", "shellcheck", "noqa", "fmt:", "pragma:" }
 
-local function step_conf (src, pos, stop, st)
-  if st and st.q then
-    local q = st.q
-    local p = pos
-    while p <= stop do
-      local c = byte(src, p)
-      if c == 92 then p = p + 2
-      elseif c == q then return p + 1, p, false, nil
-      elseif c == 10 then return p, p - 1, false, nil
-      else p = p + 1 end
+local line_body = (P(1) - P("\n")) ^ 0
+local word_start = -B(P(1)) + B(S(" \t\n\r"))
+
+local line_start = Cmt(Cp(), function (s, i, p)
+  local q = p - 1
+  while q >= 1 do
+    local b = byte(s, q)
+    if b == 32 or b == 9 then
+      q = q - 1
+    elseif b == 10 then
+      return i
+    else
+      return false
     end
-    return stop + 1, stop, false, st
   end
-  local b = byte(src, pos)
-  if b == 35 and at_word_start(src, pos) then
-    local last = line_end(src, pos, stop)
-    if is_shebang(src, pos) or has_directive(src, pos + 1, conf_directives) then
-      return last + 1, last, false, nil
-    end
-    return last + 1, pos - 1, true, nil
-  elseif b == 34 or b == 39 then
-    local p = pos + 1
-    while p <= stop do
-      local c = byte(src, p)
-      if c == 92 then p = p + 2
-      elseif c == b then return p + 1, p, false, nil
-      elseif c == 10 then return p, p - 1, false, nil
-      else p = p + 1 end
-    end
-    return stop + 1, stop, false, { q = b }
-  end
-  local nxt = find(src, "[#\"']", pos + 1)
-  local last = (nxt and nxt <= stop) and (nxt - 1) or stop
-  return last + 1, last, false, nil
+  return i
+end)
+
+local shebang_at = Cmt(Cp(), function (s, i, p)
+  if p == 1 then return i end
+  local nl = find(s, "\n", 1, true)
+  return (nl and p == nl + 1) and i or false
+end)
+
+local shebang_tok = shebang_at * P("#!") * line_body
+local shebang_tok_t = shebang_at * P("#!") * tline_body
+
+local function triple (q)
+  local t = P(q .. q .. q)
+  return t * (esc_any + (P(1) - t)) ^ 0 * (t + P(true))
 end
 
-local function strip_sh (src) return drive(step_sh, src) end
-local function strip_hcl (src) return drive(step_hcl, src) end
-local function strip_python (src) return drive(step_python, src) end
-local function strip_yaml (src) return drive(step_yaml, src) end
-local function strip_dockerfile (src) return drive(step_dockerfile, src) end
-local function strip_unit (src) return drive(step_unit, src) end
-local function strip_conf (src) return drive(step_conf, src) end
+local function ttriple (q)
+  local t = P(q .. q .. q)
+  return t * (tmpl_block + esc_any + (P(1) - t)) ^ 0 * (t + P(true))
+end
+
+local conf_grammar = tokenizer({
+  { shebang_tok, "code" },
+  { word_start * P("#") * #dir_ahead(conf_directives), "code" },
+  { word_start * P("#") * line_body, "comment" },
+  { quoted("\""), "code" },
+  { quoted("'"), "code" },
+}, "#\"'")
+
+local conf_tgrammar = tokenizer({
+  { tmpl_block, "code" },
+  { shebang_tok_t, "code" },
+  { word_start * P("#") * #dir_ahead(conf_directives) * tline_body, "code" },
+  { word_start * P("#") * tline_body, "comment" },
+  { tquoted("\"", true, true), "code" },
+  { tquoted("'", true, true), "code" },
+}, "#\"'", true)
+
+local unit_grammar = tokenizer({
+  { line_start * S("#;") * line_body, "comment" },
+}, "#;")
+
+local unit_tgrammar = tokenizer({
+  { tmpl_block, "code" },
+  { line_start * S("#;") * tline_body, "comment" },
+}, "#;", true)
+
+local py_grammar = tokenizer({
+  { shebang_tok, "code" },
+  { P("#") * #dir_ahead(py_directives) * line_body, "code" },
+  { P("#") * line_body, "comment" },
+  { triple("\""), "opaque" },
+  { triple("'"), "opaque" },
+  { quoted("\""), "code" },
+  { quoted("'"), "code" },
+}, "#\"'")
+
+local py_tgrammar = tokenizer({
+  { tmpl_block, "code" },
+  { shebang_tok_t, "code" },
+  { P("#") * #dir_ahead(py_directives) * tline_body, "code" },
+  { P("#") * tline_body, "comment" },
+  { ttriple("\""), "opaque" },
+  { ttriple("'"), "opaque" },
+  { tquoted("\"", true, true), "code" },
+  { tquoted("'", true, true), "code" },
+}, "#\"'", true)
+
+local lua_eq = P("=") ^ 0
+local lua_open = P("[") * Cg(C(lua_eq), "lvl") * P("[")
+local lua_close = Cmt(P("]") * C(lua_eq) * P("]") * Cb("lvl"), function (_, i, a, b)
+  return a == b and i or false
+end)
+local lua_long = lua_open * (P(1) - lua_close) ^ 0 * lua_close
+local lua_long_open = lua_open * P(1) ^ 0
+local lua_dir = S(" \t") ^ 0 * (P("luacheck:") + P("luacov:") + P("tk:"))
+
+lua_grammar = tokenizer({
+  { P("--") * lua_long, "comment" },
+  { P("--") * lua_long_open, "opaque" },
+  { P("--") * #lua_dir * line_body, "code" },
+  { P("--") * line_body, "comment" },
+  { quoted("\""), "code" },
+  { quoted("'"), "code" },
+  { lua_long, "opaque" },
+  { lua_long_open, "opaque" },
+}, "-\"'[")
+
+local lua_tlong = lua_open * (tmpl_block + (P(1) - lua_close)) ^ 0 * lua_close
+
+local lua_tgrammar = tokenizer({
+  { tmpl_block, "code" },
+  { P("--") * lua_long, "comment" },
+  { P("--") * lua_long_open, "comment" },
+  { P("--") * #lua_dir * tline_body, "code" },
+  { P("--") * tline_body, "comment" },
+  { tquoted("\"", true, true), "code" },
+  { tquoted("'", true, true), "code" },
+  { lua_tlong, "opaque" },
+  { lua_long_open, "opaque" },
+}, "-\"'[", true)
+
+html_grammar = tokenizer({
+  { P("<!--") * (P(1) - P("-->")) ^ 0 * P("-->"), "comment" },
+  { P("<!--") * P(1) ^ 0, "opaque" },
+}, "<")
+
+local html_tgrammar = tokenizer({
+  { tmpl_block, "code" },
+  { P("<!--") * tbody("-->"), "comment" },
+}, "<", true)
+
+local function hd_scan (s, p, hd, anyws)
+  local len = #s
+  while p <= len do
+    local nl = find(s, "\n", p, true)
+    if not nl then break end
+    if hd_end(s, p, nl - 1, hd, anyws) then return nl + 1 end
+    p = nl + 1
+  end
+  if p <= len and hd_end(s, p, len, hd, anyws) then return len + 1 end
+  return nil
+end
+
+local hd_start = Cmt(Cp() * P("<<"), function (s, _, p)
+  local hd, np = hd_delim(s, p, #s)
+  if not hd then return false end
+  gpend[#gpend + 1] = hd
+  return np
+end)
+
+local function hd_run (anyws)
+  return Cmt(P("\n"), function (s, i)
+    if #gpend == 0 then return false end
+    local p = i
+    local len = #s
+    while #gpend > 0 and p <= len do
+      local hd = table.remove(gpend, 1)
+      local np = hd_scan(s, p, hd, anyws)
+      if not np then gbail = true return false end
+      p = np
+    end
+    return p
+  end)
+end
+
+local function arith (opener, t)
+  return Cmt(opener, function (s, i)
+    local d, q, len = 2, i, #s
+    while q <= len do
+      local c = byte(s, q)
+      if t and c == 60 and byte(s, q + 1) == 37 then
+        q = skip_blk(s, q, len)
+      else
+        if c == 40 then d = d + 1
+        elseif c == 41 then
+          d = d - 1
+          if d == 0 then return q + 1 end
+        end
+        q = q + 1
+      end
+    end
+    return len + 1
+  end)
+end
+
+local function quoted_ml (q, esc)
+  if esc then
+    return P(q) * (esc_any + (P(1) - P(q))) ^ 0 * (P(q) + P(true))
+  end
+  return P(q) * (P(1) - P(q)) ^ 0 * (P(q) + P(true))
+end
+
+local sh_grammar = tokenizer({
+  { shebang_tok, "code" },
+  { word_start * P("#") * #dir_ahead(sh_directives) * line_body, "code" },
+  { word_start * P("#") * line_body, "comment" },
+  { quoted_ml("'", false), "opaque" },
+  { quoted_ml("\"", true), "opaque" },
+  { quoted_ml("`", true), "opaque" },
+  { P("\\") * P(1) ^ -1, "code" },
+  { arith(P("$((")), "code" },
+  { arith(word_start * P("((")), "code" },
+  { hd_start, "code" },
+  { P("<<"), "code" },
+  { hd_run(false), "opaque" },
+}, "#'\"`$<\\\n(")
+
+local sh_tgrammar = tokenizer({
+  { tmpl_block, "code" },
+  { shebang_tok_t, "code" },
+  { word_start * P("#") * #dir_ahead(sh_directives) * tline_body, "code" },
+  { word_start * P("#") * tline_body, "comment" },
+  { tquoted("'", false, false), "opaque" },
+  { tquoted("\"", true, false), "opaque" },
+  { tquoted("`", true, false), "opaque" },
+  { P("\\") * (P(1) - tmpl_open) ^ -1, "code" },
+  { arith(P("$(("), true), "code" },
+  { arith(word_start * P("(("), true), "code" },
+  { hd_start, "code" },
+  { P("<<"), "code" },
+  { hd_run(false), "opaque" },
+}, "#'\"`$<\\\n(", true)
+
+local hcl_grammar = tokenizer({
+  { P("#") * line_body, "comment" },
+  { P("//") * line_body, "comment" },
+  { P("/*") * (P(1) - P("*/")) ^ 0 * P("*/"), "comment" },
+  { P("/*") * P(1) ^ 0, "opaque" },
+  { quoted("\""), "code" },
+  { hd_start, "code" },
+  { P("<<"), "code" },
+  { hd_run(true), "opaque" },
+}, "#/\"<\n")
+
+local hcl_tgrammar = tokenizer({
+  { tmpl_block, "code" },
+  { P("#") * tline_body, "comment" },
+  { P("//") * tline_body, "comment" },
+  { P("/*") * tbody("*/"), "tcomment" },
+  { tquoted("\"", true, true), "code" },
+  { hd_start, "code" },
+  { P("<<"), "code" },
+  { hd_run(true), "opaque" },
+}, "#/\"<\n", true)
+
+local docker_grammar = tokenizer({
+  { line_start * P("#") * #dir_ahead(docker_directives) * line_body, "code" },
+  { line_start * P("#") * line_body, "comment" },
+  { quoted("\""), "code" },
+  { quoted("'"), "code" },
+  { hd_start, "code" },
+  { P("<<"), "code" },
+  { hd_run(true), "opaque" },
+}, "#\"'<\n")
+
+local docker_tgrammar = tokenizer({
+  { tmpl_block, "code" },
+  { line_start * P("#") * #dir_ahead(docker_directives) * tline_body, "code" },
+  { line_start * P("#") * tline_body, "comment" },
+  { tquoted("\"", true, true), "code" },
+  { tquoted("'", false, true), "code" },
+  { hd_start, "code" },
+  { P("<<"), "code" },
+  { hd_run(true), "opaque" },
+}, "#\"'<\n", true)
+
+local yaml_dq = P("\"") * (esc_any + (P(1) - P("\""))) ^ 0 * (P("\"") + P(true))
+local yaml_sq = P("'") * (P("''") + (P(1) - P("'"))) ^ 0 * (P("'") + P(true))
+local yaml_tdq = tquoted("\"", true, false)
+local yaml_tsq = P("'") * (tmpl_block + P("''") + (P(1) - P("'"))) ^ 0 * (P("'") + P(true))
+
+local function yaml_blk (t)
+  return Cmt(Cp() * S("|>") * (S("+-") + R("09")) ^ 0 * S(" \t\r") ^ 0 *
+    #(P("\n") + P(-1) + (t and tmpl_open or P(false))), function (s, i, p)
+    if t and byte(s, i) == 60 then return i end
+    local indent = line_indent(s, p)
+    local len = #s
+    local nl = find(s, "\n", i, true)
+    if not nl then return len + 1 end
+    local q = nl + 1
+    while q <= len do
+      local e = find(s, "\n", q, true)
+      local le = e and (e - 1) or len
+      local r, n = q, 0
+      while r <= le and byte(s, r) == 32 do n = n + 1 r = r + 1 end
+      local blank = r > le or byte(s, r) == 13
+      if not blank and n <= indent then return q end
+      if not e then break end
+      q = e + 1
+    end
+    return len + 1
+  end)
+end
+
+local yaml_grammar = tokenizer({
+  { shebang_tok, "code" },
+  { word_start * P("#") * #dir_ahead(yaml_directives) * line_body, "code" },
+  { word_start * P("#") * line_body, "comment" },
+  { yaml_dq, "code" },
+  { yaml_sq, "code" },
+  { word_start * yaml_blk(false), "opaque" },
+}, "#\"'|>")
+
+local yaml_tgrammar = tokenizer({
+  { tmpl_block, "code" },
+  { shebang_tok_t, "code" },
+  { word_start * P("#") * #dir_ahead(yaml_directives) * tline_body, "code" },
+  { word_start * P("#") * tline_body, "comment" },
+  { yaml_tdq, "code" },
+  { yaml_tsq, "code" },
+  { word_start * yaml_blk(true), "opaque" },
+}, "#\"'|>", true)
+
+local function setlast (v)
+  return Cmt(P(true), function (_, i) glast = v return i end)
+end
+
+local js_id = R("az", "AZ", "09") + S("_$")
+local js_line_b = (P(1) - P("\n")) ^ 0
+local js_blk = P("/*") * (P(1) - P("*/")) ^ 0 * P("*/")
+local js_dir = dir_ahead(js_directives)
+local js_class = P("[") * (esc_any + (P(1) - S("]\n"))) ^ 0 * (P("]") + P(true))
+local js_regex = P("/") * (esc_any + js_class + (P(1) - S("/\n"))) ^ 0 *
+  (P("/") + P(true)) * js_id ^ 0
+local regex_ok = Cmt(P(true), function (_, i)
+  return js_regex_allowed(glast) and i or false
+end)
+local function js_tmpl (t)
+  return Cmt(P("`"), function (s, i)
+    local d, q, len = 0, i, #s
+    while q <= len do
+      local c = byte(s, q)
+      if c == 92 then q = q + 2
+      elseif t and c == 60 and byte(s, q + 1) == 37 then q = skip_blk(s, q, len)
+      elseif c == 96 and d == 0 then return q + 1
+      elseif c == 36 and byte(s, q + 1) == 123 then d = d + 1 q = q + 2
+      elseif c == 125 and d > 0 then d = d - 1 q = q + 1
+      else q = q + 1 end
+    end
+    return len + 1
+  end)
+end
+local js_str = function (q)
+  return P(q) * (esc_any + (P(1) - P(q))) ^ 0 * (P(q) + P(true))
+end
+local js_tclass = P("[") * (esc_any + (P(1) - S("]\n") - tmpl_open)) ^ 0 * (P("]") + P(true))
+local js_tregex = P("/") * (esc_any + js_tclass + (P(1) - S("/\n") - tmpl_open)) ^ 0 *
+  (P("/") + P(true)) * js_id ^ 0
+
+js_grammar = tokenizer({
+  { P("//") * #js_dir * js_line_b * setlast(nil), "code" },
+  { P("//") * js_line_b * setlast(nil), "comment" },
+  { P("/*") * #js_dir * js_blk * setlast(nil), "code" },
+  { js_blk * setlast(nil), "comment" },
+  { P("/*") * #js_dir * P(1) ^ 0 * setlast(nil), "code" },
+  { P("/*") * P(1) ^ 0 * setlast(nil), "opaque" },
+  { regex_ok * js_regex * setlast("\1"), "code" },
+  { P("/") * setlast("/"), "code" },
+  { js_str("\"") * setlast("\1"), "code" },
+  { js_str("'") * setlast("\1"), "code" },
+  { js_tmpl(false) * setlast("\1"), "opaque" },
+  { Cmt(C(js_id ^ 1), function (_, i, w) glast = w return i end), "code" },
+  { S(" \t\n\r") ^ 1, "code" },
+  { Cmt(C(P(1)), function (_, i, c) glast = c return i end), "code" },
+}, "/\"'`")
+
+local js_tgrammar = tokenizer({
+  { tmpl_block, "code" },
+  { P("//") * #js_dir * tline_body * setlast(nil), "code" },
+  { P("//") * tline_body * setlast(nil), "comment" },
+  { P("/*") * #js_dir * tbody("*/", true) * setlast("\1"), "code" },
+  { P("/*") * tbody("*/") * setlast("\1"), "comment" },
+  { regex_ok * js_tregex * setlast("\1"), "code" },
+  { P("/") * setlast("/"), "code" },
+  { tquoted("\"", true, false) * setlast("\1"), "code" },
+  { tquoted("'", true, false) * setlast("\1"), "code" },
+  { js_tmpl(true) * setlast("\1"), "opaque" },
+  { Cmt(C(js_id ^ 1), function (_, i, w) glast = w return i end), "code" },
+  { S(" \t\n\r") ^ 1, "code" },
+  { Cmt(C(P(1)), function (_, i, c) glast = c return i end), "code" },
+}, "/\"'`", true)
+
+local function strip_sh (src) return drive_grammar(sh_grammar, src) end
+local function strip_hcl (src) return drive_grammar(hcl_grammar, src) end
+local function strip_python (src) return drive_grammar(py_grammar, src) end
+local function strip_yaml (src) return drive_grammar(yaml_grammar, src) end
+local function strip_dockerfile (src) return drive_grammar(docker_grammar, src) end
+local function strip_unit (src) return drive_grammar(unit_grammar, src) end
+local function strip_conf (src) return drive_grammar(conf_grammar, src) end
 
 local ext_map = {
   lua = strip_lua,
@@ -1127,391 +792,108 @@ local function shebang_lang (src)
   return shebang_map[first] or shebang_map[first:match("^%a+") or ""]
 end
 
-local function step_lua (src, pos, stop, st)
-  if st then
-    if st.kind == "str" then
-      local q = st.q
-      while pos <= stop do
-        local c = byte(src, pos)
-        if c == 92 then pos = pos + 2
-        elseif c == q then return pos + 1, pos, false, nil
-        elseif c == 10 then return pos + 1, pos, false, nil
-        else pos = pos + 1 end
-      end
-      return stop + 1, stop, false, st
-    else
-      local level = st.level
-      while pos <= stop do
-        local e = long_bracket_close(src, pos, level)
-        if e then return e, e - 1, false, nil, nil, true end
-        pos = pos + 1
-      end
-      return stop + 1, stop, false, st, nil, true
-    end
-  end
-  local b = byte(src, pos)
-  if b == 45 and byte(src, pos + 1) == 45 then
-    local cs = pos + 2
-    local lvl, after = long_bracket_open(src, cs)
-    if lvl then
-      local p = after
-      while p <= stop do
-        local e = long_bracket_close(src, p, lvl)
-        if e then return e, pos - 1, true, nil end
-        p = p + 1
-      end
-      return stop + 1, pos - 1, true, { kind = "cmt" }
-    end
-    local txt = ws_after(src, cs)
-    local rest = sub(src, txt)
-    if find(rest, "^luacheck:") or find(rest, "^luacov:") or find(rest, "^tk:") then
-      local nl = find(src, "\n", pos, true)
-      local last = nl and (nl - 1) or stop
-      if last > stop then last = stop end
-      return last + 1, last, false, nil
-    end
-    local nl = find(src, "\n", cs, true)
-    if nl and nl <= stop then
-      return nl, pos - 1, true, nil
-    end
-    return stop + 1, pos - 1, true, nil
-  elseif b == 34 or b == 39 then
-    local np = pos + 1
-    while np <= stop do
-      local c = byte(src, np)
-      if c == 92 then np = np + 2
-      elseif c == b then return np + 1, np, false, nil
-      elseif c == 10 then return np + 1, np, false, nil
-      else np = np + 1 end
-    end
-    return stop + 1, stop, false, { kind = "str", q = b }
-  elseif b == 91 then
-    local lvl, after = long_bracket_open(src, pos)
-    if lvl then
-      local p = after
-      while p <= stop do
-        local e = long_bracket_close(src, p, lvl)
-        if e then return e, e - 1, false, nil, nil, true end
-        p = p + 1
-      end
-      return stop + 1, stop, false, { kind = "long", level = lvl }, nil, true
-    end
-    return pos + 1, pos, false, nil
-  end
-  local nxt = find(src, "[-\"'%[]", pos + 1)
-  local last = (nxt and nxt <= stop) and (nxt - 1) or stop
-  return last + 1, last, false, nil
-end
-
-local function step_c (src, pos, stop, st)
-  if st then
-    if st.kind == "str" then
-      local q = st.q
-      while pos <= stop do
-        local c = byte(src, pos)
-        if c == 92 then pos = pos + 2
-        elseif c == q then return pos + 1, pos, false, nil
-        else pos = pos + 1 end
-      end
-      return stop + 1, stop, false, st
-    else
-      while pos <= stop do
-        if byte(src, pos) == 42 and byte(src, pos + 1) == 47 then
-          return pos + 2, pos - 1, true, nil
-        end
-        pos = pos + 1
-      end
-      return stop + 1, pos - 1, true, st
-    end
-  end
-  local b = byte(src, pos)
-  if b == 47 and byte(src, pos + 1) == 47 then
-    local start = pos
-    local p = pos + 2
-    while p <= stop do
-      local c = byte(src, p)
-      if c == 10 then break
-      elseif c == 92 then
-        if byte(src, p + 1) == 10 then p = p + 2
-        elseif byte(src, p + 1) == 13 and byte(src, p + 2) == 10 then p = p + 3
-        else p = p + 1 end
-      else p = p + 1 end
-    end
-    if has_directive(src, start + 2, c_directives) then
-      return p, p - 1, false, nil
-    end
-    return p, start - 1, true, nil
-  elseif b == 47 and byte(src, pos + 1) == 42 then
-    local start = pos
-    local p = pos + 2
-    while p <= stop do
-      if byte(src, p) == 42 and byte(src, p + 1) == 47 then
-        if has_directive(src, start + 2, c_directives) then
-          return p + 2, p + 1, false, nil
-        end
-        return p + 2, start - 1, true, nil
-      end
-      p = p + 1
-    end
-    if has_directive(src, start + 2, c_directives) then
-      return stop + 1, stop, false, nil
-    end
-    return stop + 1, start - 1, true, { kind = "cmt" }
-  elseif b == 34 or b == 39 then
-    local np = pos + 1
-    while np <= stop do
-      local c = byte(src, np)
-      if c == 92 then np = np + 2
-      elseif c == b then return np + 1, np, false, nil
-      else np = np + 1 end
-    end
-    return stop + 1, stop, false, { kind = "str", q = b }
-  end
-  local nxt = find(src, "[/\"']", pos + 1)
-  local last = (nxt and nxt <= stop) and (nxt - 1) or stop
-  return last + 1, last, false, nil
-end
-
-local function step_js (src, pos, stop, st)
-  local last = st and st.last or nil
-  if st and st.kind == "str" then
-    local q = st.q
-    while pos <= stop do
-      local c = byte(src, pos)
-      if c == 92 then pos = pos + 2
-      elseif c == q then return pos + 1, pos, false, { kind = "js", last = "\1" }
-      else pos = pos + 1 end
-    end
-    return stop + 1, stop, false, st
-  elseif st and st.kind == "tmpl" then
-    local depth = st.depth or 0
-    while pos <= stop do
-      local c = byte(src, pos)
-      if c == 92 then pos = pos + 2
-      elseif c == 96 and depth == 0 then
-        return pos + 1, pos, false, { kind = "js", last = "\1" }, nil, true
-      elseif c == 36 and byte(src, pos + 1) == 123 then depth = depth + 1; pos = pos + 2
-      elseif c == 125 and depth > 0 then depth = depth - 1; pos = pos + 1
-      else pos = pos + 1 end
-    end
-    return stop + 1, stop, false, { kind = "tmpl", depth = depth }, nil, true
-  elseif st and st.kind == "cmt" then
-    while pos <= stop do
-      if byte(src, pos) == 42 and byte(src, pos + 1) == 47 then
-        return pos + 2, pos - 1, true, { kind = "js", last = "\1" }
-      end
-      pos = pos + 1
-    end
-    return stop + 1, pos - 1, true, st
-  end
-  local b = byte(src, pos)
-  if b == 47 and byte(src, pos + 1) == 47 then
-    local start = pos
-    local p = pos + 2
-    while p <= stop and byte(src, p) ~= 10 do p = p + 1 end
-    if has_directive(src, start + 2, js_directives) then
-      return p, p - 1, false, { kind = "js", last = nil }
-    end
-    return p, start - 1, true, { kind = "js", last = nil }
-  elseif b == 47 and byte(src, pos + 1) == 42 then
-    local start = pos
-    local p = pos + 2
-    while p <= stop do
-      if byte(src, p) == 42 and byte(src, p + 1) == 47 then
-        if has_directive(src, start + 2, js_directives) then
-          return p + 2, p + 1, false, { kind = "js", last = "\1" }
-        end
-        return p + 2, start - 1, true, { kind = "js", last = "\1" }
-      end
-      p = p + 1
-    end
-    if has_directive(src, start + 2, js_directives) then
-      return stop + 1, stop, false, { kind = "js", last = "\1" }
-    end
-    return stop + 1, start - 1, true, { kind = "cmt" }
-  elseif b == 47 then
-    if js_regex_allowed(last) then
-      local p = pos + 1
-      local in_class = false
-      while p <= stop do
-        local c = byte(src, p)
-        if c == 92 then p = p + 2
-        elseif c == 91 then in_class = true; p = p + 1
-        elseif c == 93 then in_class = false; p = p + 1
-        elseif c == 47 and not in_class then p = p + 1; break
-        elseif c == 10 then break
-        else p = p + 1 end
-      end
-      while p <= stop and is_ident_ch(byte(src, p)) do p = p + 1 end
-      return p, p - 1, false, { kind = "js", last = "\1" }
-    end
-    return pos + 1, pos, false, { kind = "js", last = "/" }
-  elseif b == 34 or b == 39 then
-    local np = pos + 1
-    while np <= stop do
-      local c = byte(src, np)
-      if c == 92 then np = np + 2
-      elseif c == b then return np + 1, np, false, { kind = "js", last = "\1" }
-      else np = np + 1 end
-    end
-    return stop + 1, stop, false, { kind = "str", q = b }
-  elseif b == 96 then
-    local np = pos + 1
-    local depth = 0
-    while np <= stop do
-      local c = byte(src, np)
-      if c == 92 then np = np + 2
-      elseif c == 96 and depth == 0 then
-        return np + 1, np, false, { kind = "js", last = "\1" }, nil, true
-      elseif c == 36 and byte(src, np + 1) == 123 then depth = depth + 1; np = np + 2
-      elseif c == 125 and depth > 0 then depth = depth - 1; np = np + 1
-      else np = np + 1 end
-    end
-    return stop + 1, stop, false, { kind = "tmpl", depth = depth }, nil, true
-  elseif is_ident_ch(b) then
-    local np = pos
-    while np <= stop and is_ident_ch(byte(src, np)) do np = np + 1 end
-    return np, np - 1, false, { kind = "js", last = sub(src, pos, np - 1) }
-  elseif b == 32 or b == 9 or b == 10 or b == 13 then
-    local np = pos
-    while np <= stop do
-      local c = byte(src, np)
-      if c == 32 or c == 9 or c == 10 or c == 13 then np = np + 1 else break end
-    end
-    return np, np - 1, false, { kind = "js", last = last }
-  end
-  return pos + 1, pos, false, { kind = "js", last = sub(src, pos, pos) }
-end
-
-local function step_css (src, pos, stop, st)
-  if st then
-    if st.kind == "str" then
-      local q = st.q
-      while pos <= stop do
-        local c = byte(src, pos)
-        if c == 92 then pos = pos + 2
-        elseif c == q then return pos + 1, pos, false, nil
-        elseif c == 10 then return pos + 1, pos, false, nil
-        else pos = pos + 1 end
-      end
-      return stop + 1, stop, false, st
-    end
-    while pos <= stop do
-      if byte(src, pos) == 42 and byte(src, pos + 1) == 47 then
-        return pos + 2, pos - 1, true, nil
-      end
-      pos = pos + 1
-    end
-    return stop + 1, pos - 1, true, st
-  end
-  local b = byte(src, pos)
-  if b == 47 and byte(src, pos + 1) == 42 then
-    local p = pos + 2
-    while p <= stop do
-      if byte(src, p) == 42 and byte(src, p + 1) == 47 then
-        return p + 2, pos - 1, true, nil
-      end
-      p = p + 1
-    end
-    return stop + 1, pos - 1, true, { kind = "cmt" }
-  elseif b == 34 or b == 39 then
-    local np = pos + 1
-    while np <= stop do
-      local c = byte(src, np)
-      if c == 92 then np = np + 2
-      elseif c == b then return np + 1, np, false, nil
-      elseif c == 10 then return np + 1, np, false, nil
-      else np = np + 1 end
-    end
-    return stop + 1, stop, false, { kind = "str", q = b }
-  end
-  local nxt = find(src, "[/\"']", pos + 1)
-  local last = (nxt and nxt <= stop) and (nxt - 1) or stop
-  return last + 1, last, false, nil
-end
-
-local function step_html (src, pos, stop, st)
-  if byte(src, pos) == 60 and byte(src, pos + 1) == 33 and
-     byte(src, pos + 2) == 45 and byte(src, pos + 3) == 45 then
-    local p = pos + 4
-    while p <= stop do
-      if byte(src, p) == 45 and byte(src, p + 1) == 45 and byte(src, p + 2) == 62 then
-        return p + 3, pos - 1, true, nil
-      end
-      p = p + 1
-    end
-    return stop + 1, pos - 1, true, { kind = "cmt" }
-  end
-  local nxt = find(src, "<", pos + 1, true)
-  local last = (nxt and nxt <= stop) and (nxt - 1) or stop
-  return last + 1, last, false, st
-end
-
-local steppers = {
-  lua = step_lua,
-  c = step_c, h = step_c, cpp = step_c, cc = step_c, hpp = step_c, m = step_c,
-  java = step_c,
-  js = step_js,
-  css = step_css,
-  conf = step_conf, env = step_conf,
-  html = step_html, htm = step_html,
-  sh = step_sh, bash = step_sh,
-  tf = step_hcl, tfvars = step_hcl, hcl = step_hcl,
-  py = step_python,
-  yml = step_yaml, yaml = step_yaml,
-  dockerfile = step_dockerfile,
-  service = step_unit, timer = step_unit, socket = step_unit,
+local grammars = {
+  lua = lua_grammar,
+  c = c_grammar, h = c_grammar, cpp = c_grammar, cc = c_grammar,
+  hpp = c_grammar, m = c_grammar, java = c_grammar,
+  js = js_grammar,
+  css = css_grammar,
+  conf = conf_grammar, env = conf_grammar,
+  html = html_grammar, htm = html_grammar,
+  sh = sh_grammar, bash = sh_grammar,
+  tf = hcl_grammar, tfvars = hcl_grammar, hcl = hcl_grammar,
+  py = py_grammar,
+  yml = yaml_grammar, yaml = yaml_grammar,
+  dockerfile = docker_grammar,
+  service = unit_grammar, timer = unit_grammar, socket = unit_grammar,
 }
 
-local function strip_template (src, output_lang)
+local tmpl_none = tokenizer({ { tmpl_block, "code" } }, "", true)
+
+local tmpl_grammars = {
+  lua = lua_tgrammar,
+  c = c_tgrammar, h = c_tgrammar, cpp = c_tgrammar, cc = c_tgrammar,
+  hpp = c_tgrammar, m = c_tgrammar, java = c_tgrammar,
+  js = js_tgrammar,
+  css = css_tgrammar,
+  conf = conf_tgrammar, env = conf_tgrammar,
+  html = html_tgrammar, htm = html_tgrammar,
+  sh = sh_tgrammar, bash = sh_tgrammar,
+  tf = hcl_tgrammar, tfvars = hcl_tgrammar, hcl = hcl_tgrammar,
+  py = py_tgrammar,
+  yml = yaml_tgrammar, yaml = yaml_tgrammar,
+  dockerfile = docker_tgrammar,
+  service = unit_tgrammar, timer = unit_tgrammar, socket = unit_tgrammar,
+}
+
+local function emit_block (src, out, f)
+  local close = find(src, "%>", f + 2, true)
+  if not close then
+    out[#out + 1] = sub(src, f)
+    return #src + 1
+  end
+  local code = (strip_lua(sub(src, f + 2, close - 1)))
+  if find(code, "^%s*$") then
+    return after_comment(src, f, close + 2, out)
+  end
+  out[#out + 1] = "<%"
+  out[#out + 1] = code
+  out[#out + 1] = "%>"
+  return close + 2
+end
+
+local function emit_code (src, out, a, b)
+  local pos = a
+  while pos < b do
+    local f = find(src, "<%", pos, true)
+    if not f or f >= b then
+      out[#out + 1] = sub(src, pos, b - 1)
+      return b
+    end
+    if f > pos then out[#out + 1] = sub(src, pos, f - 1) end
+    pos = emit_block(src, out, f)
+  end
+  return pos
+end
+
+local function emit_tcomment (src, out, a, b)
+  local pos = a
+  while pos < b do
+    local f = find(src, "<%", pos, true)
+    if not f or f >= b then break end
+    pos = emit_block(src, out, f)
+  end
+  if pos >= b then return pos end
+  return after_comment(src, pos, b, out)
+end
+
+local function render_tmpl (src, toks)
   local out = {}
   local pos = 1
-  local len = #src
-  local step = steppers[output_lang]
-  local st = nil
-  while pos <= len do
-    if byte(src, pos) == 60 and byte(src, pos + 1) == 37 then
-      if st and st.kind == "cmt" then
-        return src, true
-      end
-      local p = pos + 2
-      local close = find(src, "%>", p, true)
-      if not close then
-        out[#out + 1] = sub(src, pos)
-        pos = len + 1
+  for i = 1, #toks do
+    local t = toks[i]
+    local kind, s, e = t[1], t[2], t[3]
+    if e > pos then
+      if kind == "comment" and s >= pos then
+        local f = find(src, "<%", s, true)
+        if f and f < e then return nil end
+        pos = after_comment(src, s, e, out)
+      elseif kind == "tcomment" and s >= pos then
+        pos = emit_tcomment(src, out, s, e)
       else
-        local code = (strip_lua(sub(src, p, close - 1)))
-        if find(code, "^%s*$") then
-          pos = after_comment(src, pos, close + 2, out)
-        else
-          out[#out + 1] = "<%"
-          out[#out + 1] = code
-          out[#out + 1] = "%>"
-          pos = close + 2
-        end
-      end
-    else
-      local seg_end = find(src, "<%", pos, true)
-      local seg_stop = seg_end and (seg_end - 1) or len
-      if not step then
-        out[#out + 1] = sub(src, pos, seg_stop)
-        pos = seg_stop + 1
-      else
-        while pos <= seg_stop do
-          local np, emit_end, stripped, nst, bail = step(src, pos, seg_stop, st)
-          if bail then return src, true end
-          if stripped then
-            np = after_comment(src, pos, np, out)
-          elseif emit_end >= pos then
-            out[#out + 1] = sub(src, pos, emit_end)
-          end
-          pos = np
-          st = nst
-        end
+        pos = emit_code(src, out, s < pos and pos or s, e)
       end
     end
   end
-  return guard(concat(out), src, false)
+  return concat(out)
+end
+
+local function strip_template (src, output_lang)
+  local toks = grammar_toks(tmpl_grammars[output_lang] or tmpl_none, src)
+  if not toks then return src, true end
+  local out = render_tmpl(src, toks)
+  if not out then return src, true end
+  return guard(out, src, false)
 end
 
 local license_markers = {
@@ -1589,21 +971,18 @@ local function license_head (src)
   return nil
 end
 
-local function mark_protected (src, step, from, to, prot)
-  local pos = from
-  local st = nil
-  while pos <= to do
-    local np, _, stripped, nst, bail, opaque = step(src, pos, to, st)
-    if bail then return false end
-    if stripped or opaque then
-      local i = find(src, "\n", pos, true)
-      while i and i < np do
-        prot[i] = true
-        i = find(src, "\n", i + 1, true)
+local function mark_protected (src, patt, prot)
+  local toks = grammar_toks(patt, src)
+  if not toks then return false end
+  for i = 1, #toks do
+    local t = toks[i]
+    if t[1] ~= "code" then
+      local j = find(src, "\n", t[2], true)
+      while j and j < t[3] do
+        prot[j] = true
+        j = find(src, "\n", j + 1, true)
       end
     end
-    pos = np
-    st = nst
   end
   return true
 end
@@ -1631,35 +1010,34 @@ local function collapse_marked (src, prot)
   return concat(out)
 end
 
-local function collapse_blanks (src, lang, templated)
-  local step = steppers[lang]
-  local prot = {}
-  if templated then
-    local pos = 1
-    local len = #src
-    while pos <= len do
-      if byte(src, pos) == 60 and byte(src, pos + 1) == 37 then
-        local close = find(src, "%>", pos + 2, true)
-        local stop = close and (close + 1) or len
-        local i = find(src, "\n", pos, true)
-        while i and i <= stop do
-          prot[i] = true
-          i = find(src, "\n", i + 1, true)
-        end
-        pos = stop + 1
-      else
-        local seg = find(src, "<%", pos, true)
-        local stop = seg and (seg - 1) or len
-        if step and stop >= pos and not mark_protected(src, step, pos, stop, prot) then
-          return src
-        end
-        pos = stop + 1
-      end
+local function mark_blocks (src, prot)
+  local len = #src
+  local pos = 1
+  while pos <= len do
+    local f = find(src, "<%", pos, true)
+    if not f then return end
+    local close = find(src, "%>", f + 2, true)
+    local stop = close and (close + 1) or len
+    local i = find(src, "\n", f, true)
+    while i and i <= stop do
+      prot[i] = true
+      i = find(src, "\n", i + 1, true)
     end
-  else
-    if not step then return src end
-    if not mark_protected(src, step, 1, #src, prot) then return src end
+    pos = stop + 1
   end
+end
+
+local function collapse_blanks (src, lang, templated)
+  local prot = {}
+  local patt
+  if templated then
+    mark_blocks(src, prot)
+    patt = tmpl_grammars[lang]
+  else
+    patt = grammars[lang]
+    if not patt then return src end
+  end
+  if patt and not mark_protected(src, patt, prot) then return src end
   return collapse_marked(src, prot)
 end
 
