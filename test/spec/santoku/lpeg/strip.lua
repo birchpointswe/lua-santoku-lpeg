@@ -810,6 +810,32 @@ test("blank line collapsing", function ()
 
 end)
 
+test("block comment spanning a template block", function ()
+
+  test("bails consistently across every block-comment language", function ()
+    for _, lang in ipairs({ "c", "js", "css", "hcl" }) do
+      local out, bailed = strip.strip_template("a /* c <% x() %> d */ b\n", lang)
+      assert(bailed, lang .. " did not bail")
+      assert(out == "a /* c <% x() %> d */ b\n", lang .. " altered the source")
+    end
+    local out, bailed = strip.strip_template("a --[[ c <% x() %> d ]] b\n", "lua")
+    assert(bailed)
+    assert(out == "a --[[ c <% x() %> d ]] b\n")
+  end)
+
+  test("stripping must never uncomment a block", function ()
+    local src = "a /* c <% x() %> d */ b\n"
+    local out = strip.strip_template(src, "hcl")
+    assert(out:find("/%*") and out:find("%*/"))
+  end)
+
+  test("ordinary hcl comments still strip", function ()
+    assert(strip.strip_template("# c\nx = 1 # gone\n", "hcl") == "x = 1\n")
+    assert(strip.strip_hcl("a = 1 # x\nb = 2 // y\nc = 3 /* z */\n") == "a = 1\nb = 2\nc = 3\n")
+  end)
+
+end)
+
 test("empty template blocks", function ()
 
   test("comment-only block on its own line disappears entirely", function ()

@@ -586,7 +586,7 @@ local hcl_tgrammar = tokenizer({
   { tmpl_block, "code" },
   { P("#") * tline_body, "comment" },
   { P("//") * tline_body, "comment" },
-  { P("/*") * tbody("*/"), "tcomment" },
+  { P("/*") * tbody("*/"), "comment" },
   { tquoted("\"", true, true), "code" },
   { hd_start, "code" },
   { P("<<"), "code" },
@@ -856,17 +856,6 @@ local function emit_code (src, out, a, b)
   return pos
 end
 
-local function emit_tcomment (src, out, a, b)
-  local pos = a
-  while pos < b do
-    local f = find(src, "<%", pos, true)
-    if not f or f >= b then break end
-    pos = emit_block(src, out, f)
-  end
-  if pos >= b then return pos end
-  return after_comment(src, pos, b, out)
-end
-
 local function render_tmpl (src, toks)
   local out = {}
   local pos = 1
@@ -878,8 +867,6 @@ local function render_tmpl (src, toks)
         local f = find(src, "<%", s, true)
         if f and f < e then return nil end
         pos = after_comment(src, s, e, out)
-      elseif kind == "tcomment" and s >= pos then
-        pos = emit_tcomment(src, out, s, e)
       else
         pos = emit_code(src, out, s < pos and pos or s, e)
       end

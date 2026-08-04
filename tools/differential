@@ -1,0 +1,66 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -uo pipefail
+
+REV="${1:-593d9fa}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+git -C "$ROOT" show "$REV:lib/santoku/lpeg/strip.lua" > "$WORK/strip_ref.lua" || {
+  echo "cannot extract lib/santoku/lpeg/strip.lua at $REV" >&2; exit 1; }
+
+for r in "$HOME/dotfiles" "$HOME"/git/*/; do
+  [ -d "$r/.git" ] || continue
+  git -C "$r" ls-files -z 2>/dev/null | while IFS= read -r -d '' f; do
+    case "$f" in */vendor/*|vendor/*|*/deps/*|*/node_modules/*|*/build/*) continue ;; esac
+    [ -f "$r$f" ] && echo "$r$f"
+  done
+done > "$WORK/corpus.txt"
+
+echo "reference $REV, corpus $(wc -l < "$WORK/corpus.txt") files"
+
+WORK="$WORK" ROOT="$ROOT" lua - "$WORK/corpus.txt" <<'LUA'
+local work, root = os.getenv("WORK"), os.getenv("ROOT")
+package.path = root .. "/lib/?.lua;" .. package.path
+local new = require("santoku.lpeg.strip")
+local ref = dofile(work .. "/strip_ref.lua")
+local function subseq (o, s)
+  local oi, si = 1, 1
+  while oi <= #o do
+    if si > #s then return false end
+    if o:byte(oi) == s:byte(si) then oi = oi + 1 end
+    si = si + 1
+  end
+  return true
+end
+local diffs, files, fuzz = 0, 0, 0
+local function cmp (path, rel, src, tag)
+  local ok1, o1, b1 = pcall(ref.strip, src, rel)
+  local ok2, o2, b2 = pcall(new.strip, src, rel)
+  if not ok2 then diffs = diffs + 1 print("  CRASH " .. path .. " " .. tag) return end
+  if not ok1 then return end
+  if b1 ~= b2 or o1 ~= o2 then
+    diffs = diffs + 1
+    print(string.format("  DIVERGES %s [%s] bail %s->%s", path, tag, tostring(b1), tostring(b2)))
+  end
+  if not b2 and not subseq(o2, src) then diffs = diffs + 1 print("  NOT-SUBSEQ " .. path) end
+end
+for path in io.lines(arg[1]) do
+  local f = io.open(path, "rb")
+  if f then
+    local src = f:read("*a") f:close()
+    if src and not src:find("\0", 1, true) then
+      local rel = path:gsub("^.*/git/[^/]+/", ""):gsub("^.*/dotfiles/", "")
+      files = files + 1
+      cmp(path, rel, src, "full")
+      for _, fr in ipairs({ 0.13, 0.37, 0.5, 0.71, 0.93 }) do
+        local cut = math.floor(#src * fr)
+        if cut > 0 then fuzz = fuzz + 1 cmp(path, rel, src:sub(1, cut), "cut@" .. cut) end
+      end
+    end
+  end
+end
+print(string.format("compared %d files + %d truncations", files, fuzz))
+print(diffs == 0 and "IDENTICAL" or ("DIVERGENCES: " .. diffs))
+os.exit(diffs == 0 and 0 or 1)
+LUA
