@@ -1,14 +1,3 @@
-/*
-** santoku.re: compile-side glue. Builds a thread-portable program from a
-** compiled lpeg pattern (validating out match-time / value captures, resolving
-** named groups to dense tag ids) and hands it to consumers as a
-** "santoku_re_prog" userdata whose tk_re_prog_t (santoku/re_match.h) the
-** header-only matcher reads. Also the _prog / _check / _tags / _pmatch
-** bindings on santoku.re.core.
-**
-** The vendored compiler's 'Instruction' and the header's 'tk_re_inst_t' have
-** identical layout; the program is memcpy'd across by byte count.
-*/
 
 static char *tk_re_strdup (const char *s) {
   size_t n = strlen(s) + 1;
@@ -17,9 +6,6 @@ static char *tk_re_strdup (const char *s) {
   return d;
 }
 
-/* Non-raising build + validate over the vendored compiled code. Fills *out
-** (owned code copy + tag arrays) and returns 0; on failure sets *err and
-** returns -1. 'idx' is a positive stack index of an lpeg pattern udata. */
 static int tk_re_build (lua_State *L, int idx, tk_re_prog_t *out, const char **err) {
   Pattern *pat;
   Instruction *code, *p;
@@ -30,7 +16,7 @@ static int tk_re_build (lua_State *L, int idx, tk_re_prog_t *out, const char **e
   (void) getpatt(L, idx, NULL);
   pat = getpattern(L, idx);
   code = (pat->code != NULL) ? pat->code : prepcompile(L, pat, idx);
-  n = (int) code[-1].codesize;
+  n = (int) code[-1].codesize - 1;
   for (p = code; (p - code) < n; p += sizei(p)) {
     Opcode op = (Opcode) p->i.code;
     if (op == ICloseRunTime) {
@@ -64,11 +50,18 @@ static int tk_re_build (lua_State *L, int idx, tk_re_prog_t *out, const char **e
   }
   out->code = (tk_re_inst_t *) malloc((size_t) n * sizeof(tk_re_inst_t));
   if (!out->code) { *err = "out of memory"; goto invalid; }
-  memcpy(out->code, code, (size_t) n * sizeof(Instruction));  /* layouts match */
+  memcpy(out->code, code, (size_t) n * sizeof(Instruction));
   out->codesize = n;
   out->ntags = ntags;
   out->tagnames = ntags ? (char **) malloc((size_t) ntags * sizeof(char *)) : NULL;
   out->tagkeys = ntags ? (unsigned short *) malloc((size_t) ntags * sizeof(unsigned short)) : NULL;
+  if (ntags && (!out->tagnames || !out->tagkeys)) {
+    free(out->tagnames);
+    free(out->tagkeys);
+    free(out->code);
+    *err = "out of memory";
+    goto invalid;
+  }
   for (i = 0; i < ntags; i++) { out->tagnames[i] = names[i]; out->tagkeys[i] = keys[i]; }
   return 0;
 invalid:
@@ -91,7 +84,6 @@ static int tk_re_prog_gc (lua_State *L) {
   return 0;
 }
 
-/* re.core._prog(pattern) -> program userdata (thread-portable, gc-managed). */
 static int l_re_prog (lua_State *L) {
   tk_re_prog_t built;
   const char *err = NULL;
@@ -131,8 +123,6 @@ static int l_re_tags (lua_State *L) {
   return 1;
 }
 
-/* re.core._pmatch(pattern, subject [, init]) -> end offset + ncaps, or nil.
-** Builds a temporary program and exercises the header-only matcher. */
 static int l_re_pmatch (lua_State *L) {
   size_t len;
   const char *s = luaL_checklstring(L, 2, &len);
@@ -165,11 +155,11 @@ static const luaL_Reg tk_re_extra[] = {
 
 int luaopen_santoku_re_core (lua_State *L);
 int luaopen_santoku_re_core (lua_State *L) {
-  luaL_newmetatable(L, TK_RE_PROG_MT);   /* program udata metatable */
+  luaL_newmetatable(L, TK_RE_PROG_MT);
   lua_pushcfunction(L, tk_re_prog_gc);
   lua_setfield(L, -2, "__gc");
   lua_pop(L, 1);
-  tk_re_open_core(L);                    /* core lpeg table on top */
+  tk_re_open_core(L);
   luaL_setfuncs(L, tk_re_extra, 0);
   return 1;
 }
