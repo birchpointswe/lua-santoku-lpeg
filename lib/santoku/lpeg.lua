@@ -1,4 +1,5 @@
 local lpeg = require("santoku.re.core")
+local arr = require("santoku.array")
 local P, S, R, C, Cc, Cp, Ct, V = lpeg.P, lpeg.S, lpeg.R, lpeg.C, lpeg.Cc, lpeg.Cp, lpeg.Ct, lpeg.V
 local match = lpeg.match
 local wrap, yield = coroutine.wrap, coroutine.yield
@@ -128,7 +129,7 @@ local function html_text(str)
           or match(style_cp, str, pos)
         if npos then
           if #buf > 0 then
-            local text = table.concat(buf)
+            local text = arr.concat(buf)
             buf = {}
             if #text > 0 then yield(text) end
           end
@@ -137,7 +138,7 @@ local function html_text(str)
           local tname = match(tag_name_only, str, pos)
           if tname and block_elems[tname:lower()] then
             if #buf > 0 then
-              local text = table.concat(buf)
+              local text = arr.concat(buf)
               buf = {}
               if #text > 0 then yield(text) end
             end
@@ -158,7 +159,7 @@ local function html_text(str)
       end
     end
     if #buf > 0 then
-      local text = table.concat(buf)
+      local text = arr.concat(buf)
       if #text > 0 then yield(text) end
     end
   end)
@@ -231,7 +232,7 @@ local function html_extract(str)
               stack[i].close_e = cend - 1
               stack[i].lname = nil
               tags[#tags + 1] = stack[i]
-              table.remove(stack, i)
+              arr.remove(stack, i, i)
               break
             end
           end
@@ -274,8 +275,8 @@ local function html_extract(str)
       pos = text_end + 1
     end
   end
-  table.sort(tags, function(a, b) return a.open_s < b.open_s end)
-  return table.concat(parts), tags
+  arr.sort(tags, function(a, b) return a.open_s < b.open_s end)
+  return arr.concat(parts), tags
 end
 
 local function html_tags(str)
@@ -293,7 +294,7 @@ end
 local function html_inject(text, tags, attr_order)
   local sorted = {}
   for i = 1, #tags do sorted[i] = tags[i] end
-  table.sort(sorted, function(a, b) return a.s < b.s end)
+  arr.sort(sorted, function(a, b) return a.s < b.s end)
   local parts = {}
   local pos = 1
   for i = 1, #sorted do
@@ -333,7 +334,7 @@ local function html_inject(text, tags, attr_order)
   if pos <= #text then
     parts[#parts + 1] = text:sub(pos)
   end
-  return table.concat(parts)
+  return arr.concat(parts)
 end
 
 local function html_spans(tags)
@@ -394,7 +395,7 @@ local function component_parts(html)
     if sc_self_start then picks[#picks + 1] = { sc_self_start, "script_self" } end
     if st_start then picks[#picks + 1] = { st_start, "style" } end
     if #picks == 0 then pos = lt + 1 else
-    table.sort(picks, function (a, b) return a[1] < b[1] end)
+    arr.sort(picks, function (a, b) return a[1] < b[1] end)
     local pick = picks[1]
     if pick[2] == "script_self" then
       local attrs = {}
@@ -430,7 +431,7 @@ local function component_parts(html)
       pos = close_end
     end end
   end
-  table.sort(ranges, function (a, b) return a[1] < b[1] end)
+  arr.sort(ranges, function (a, b) return a[1] < b[1] end)
   local body_parts = {}
   local bp = 1
   for i = 1, #ranges do
@@ -442,7 +443,7 @@ local function component_parts(html)
   if bp <= len then
     body_parts[#body_parts + 1] = html:sub(bp)
   end
-  local body = table.concat(body_parts):match("^%s*(.-)%s*$") or ""
+  local body = arr.concat(body_parts):match("^%s*(.-)%s*$") or ""
   return {
     deps = deps,
     style = style_content,
@@ -492,7 +493,7 @@ local function minify_html(html)
       pos = text_end + 1
     end
   end
-  local result = table.concat(parts)
+  local result = arr.concat(parts)
   return result:match("^%s*(.-)%s*$") or ""
 end
 
@@ -550,12 +551,8 @@ local function transform_inline(html, transforms)
     bp = r[2] + 1
   end
   parts[#parts + 1] = html:sub(bp)
-  return table.concat(parts)
+  return arr.concat(parts)
 end
-
-
-
-
 
 local csv_dq = P("\"")
 local csv_field_q = csv_dq * C(((1 - csv_dq) + (csv_dq * csv_dq)) ^ 0) * csv_dq

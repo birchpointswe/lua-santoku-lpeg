@@ -6,11 +6,10 @@ local env = {
   public = true,
   dependencies = {
     "lua == 5.1",
-
+    "santoku >= 2.0.0, < 3.0.0",
   },
   test = {
     dependencies = {
-      "santoku >= 2.0.0, < 3.0.0",
       "santoku-matrix >= 2.0.0, < 3.0.0",
     }
   }

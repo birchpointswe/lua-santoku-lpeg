@@ -1,4 +1,5 @@
 local test = require("santoku.test")
+local str = require("santoku.string")
 local lp = require("santoku.lpeg")
 
 test("json_fields", function ()
@@ -232,19 +233,19 @@ test("transform_inline", function ()
 
   test("transforms inline js", function ()
     local html = '<script>var x = 1;</script>'
-    local result = lp.transform_inline(html, { js = string.upper })
+    local result = lp.transform_inline(html, { js = str.upper })
     assert(result:find("VAR X = 1;"))
   end)
 
   test("transforms inline css", function ()
     local html = '<style>.a { color: red }</style>'
-    local result = lp.transform_inline(html, { css = string.upper })
+    local result = lp.transform_inline(html, { css = str.upper })
     assert(result:find("%.A { COLOR: RED }"))
   end)
 
   test("skips script with src", function ()
     local html = '<script src="x.js">keep</script>'
-    local result = lp.transform_inline(html, { js = string.upper })
+    local result = lp.transform_inline(html, { js = str.upper })
     assert(result:find("keep"))
     assert(not result:find("KEEP"))
   end)

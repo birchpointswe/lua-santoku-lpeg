@@ -1,13 +1,15 @@
 local lpeg = require("santoku.re.core")
+local str = require("santoku.string")
+local arr = require("santoku.array")
 
 local P, S, Cc, Cp, Ct = lpeg.P, lpeg.S, lpeg.Cc, lpeg.Cp, lpeg.Ct
 local Cmt, B, C, Cg, Cb, R = lpeg.Cmt, lpeg.B, lpeg.C, lpeg.Cg, lpeg.Cb, lpeg.R
 local lmatch = lpeg.match
 
-local byte = string.byte
-local sub = string.sub
-local find = string.find
-local concat = table.concat
+local byte = str.byte
+local sub = str.sub
+local find = str.find
+local concat = arr.concat
 
 local function is_subseq (out, src)
   local oi = 1
@@ -504,7 +506,7 @@ local function hd_run (anyws)
     local p = i
     local len = #s
     while #gpend > 0 and p <= len do
-      local hd = table.remove(gpend, 1)
+      local _, hd = arr.shift(gpend)
       local np = hd_scan(s, p, hd, anyws)
       if not np then gbail = true return false end
       p = np
