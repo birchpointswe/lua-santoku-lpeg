@@ -31,6 +31,21 @@ test("strip_lua", function ()
     assert(strip.strip_lua(src) == src)
   end)
 
+  test("preserves nothing placeholder", function ()
+    local src = "if x then\n  -- nothing\nend\n"
+    assert(strip.strip_lua(src) == src)
+  end)
+
+  test("preserves nothing placeholder at end of input", function ()
+    local src = "if x then\n  -- nothing"
+    assert(strip.strip_lua(src) == src)
+  end)
+
+  test("nothing as a prefix is still a comment", function ()
+    local src = "x = 1 -- nothing to see here\n"
+    assert(strip.strip_lua(src) == "x = 1\n")
+  end)
+
   test("comment markers inside short strings preserved", function ()
     local src = "local s = \"-- not a comment\"\n"
     assert(strip.strip_lua(src) == src)

@@ -444,7 +444,8 @@ local lua_close = Cmt(P("]") * C(lua_eq) * P("]") * Cb("lvl"), function (_, i, a
 end)
 local lua_long = lua_open * (P(1) - lua_close) ^ 0 * lua_close
 local lua_long_open = lua_open * P(1) ^ 0
-local lua_dir = S(" \t") ^ 0 * (P("luacheck:") + P("luacov:") + P("tk:"))
+local lua_nothing = P("nothing") * S(" \t") ^ 0 * #(P("\n") + P(-1))
+local lua_dir = S(" \t") ^ 0 * (P("luacheck:") + P("luacov:") + P("tk:") + lua_nothing)
 
 lua_grammar = tokenizer({
   { P("--") * lua_long, "comment" },

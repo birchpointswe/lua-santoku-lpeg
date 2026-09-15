@@ -4,10 +4,11 @@
 
 # santoku-lpeg
 
-Scanning and text transformation jobs built on [lpeg](http://www.inf.puc-rio.br/~roberto/lpeg/):
-streaming field extraction from JSON lines, HTML scanners, extractors, rewriters, a
-minifier, and a subsequence-safe comment stripper. It does not re-expose lpeg's own
-primitives; for those, read the lpeg documentation.
+Scanning and text transformation built on [lpeg](http://www.inf.puc-rio.br/~roberto/lpeg/),
+which it vendors as the C module `santoku.re.core` so it can coexist with an external lpeg
+rock: the full combinator set, a PEG grammar frontend, streaming field extraction from JSON
+lines, HTML scanners, extractors, rewriters, a minifier, and a subsequence-safe comment
+stripper.
 
 ## Documentation
 
