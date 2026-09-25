@@ -1,8 +1,9 @@
 local lpeg = require("santoku.re.core")
 local arr = require("santoku.array")
+local str = require("santoku.string")
+local co_factory = require("santoku.co")
 local P, S, R, C, Cc, Cp, Ct, V = lpeg.P, lpeg.S, lpeg.R, lpeg.C, lpeg.Cc, lpeg.Cp, lpeg.Ct, lpeg.V
 local match = lpeg.match
-local wrap, yield = coroutine.wrap, coroutine.yield
 
 local ws = S(" \t\n\r") ^ 0
 local esc = P("\\") * P(1)
@@ -29,62 +30,63 @@ local key_cap = P("\"") * C(str_inner) * P("\"") * Cp()
 local str_pos = P("\"") * Cp() * str_inner * Cp() * P("\"") * Cp()
 local val_end = jval * Cp()
 
-local function json_fields(str, fields)
+local function json_fields(input, fields)
+  local co = co_factory()
   local fset = {}
   for i = 1, #fields do
     fset[fields[i]] = true
   end
-  return wrap(function ()
-    local pos = match(ws * P("{") * Cp(), str)
+  return co.wrap(function ()
+    local pos = match(ws * P("{") * Cp(), input)
     if not pos then return end
     while true do
-      pos = match(ws * Cp(), str, pos)
+      pos = match(ws * Cp(), input, pos)
       if not pos then return end
-      local ch = str:sub(pos, pos)
+      local ch = str.sub(input, pos, pos)
       if ch == "}" then return end
       if ch == "," then
         pos = pos + 1
-        pos = match(ws * Cp(), str, pos)
+        pos = match(ws * Cp(), input, pos)
         if not pos then return end
       end
-      local key, kend = match(key_cap, str, pos)
+      local key, kend = match(key_cap, input, pos)
       if not key then return end
-      pos = match(ws * P(":") * ws * Cp(), str, kend)
+      pos = match(ws * P(":") * ws * Cp(), input, kend)
       if not pos then return end
       if fset[key] then
-        local ch2 = str:sub(pos, pos)
+        local ch2 = str.sub(input, pos, pos)
         if ch2 == "\"" then
-          local s, e, npos = match(str_pos, str, pos)
+          local s, e, npos = match(str_pos, input, pos)
           if not s then return end
-          if e > s then yield(s, e - 1) end
+          if e > s then co.yield(s, e - 1) end
           pos = npos
         elseif ch2 == "[" then
           pos = pos + 1
           while true do
-            pos = match(ws * Cp(), str, pos)
+            pos = match(ws * Cp(), input, pos)
             if not pos then return end
-            local ac = str:sub(pos, pos)
+            local ac = str.sub(input, pos, pos)
             if ac == "]" then pos = pos + 1; break end
             if ac == "," then
               pos = pos + 1
             elseif ac == "\"" then
-              local s, e, npos = match(str_pos, str, pos)
+              local s, e, npos = match(str_pos, input, pos)
               if not s then return end
-              if e > s then yield(s, e - 1) end
+              if e > s then co.yield(s, e - 1) end
               pos = npos
             else
-              local npos = match(val_end, str, pos)
+              local npos = match(val_end, input, pos)
               if not npos then return end
               pos = npos
             end
           end
         else
-          local npos = match(val_end, str, pos)
+          local npos = match(val_end, input, pos)
           if not npos then return end
           pos = npos
         end
       else
-        local npos = match(val_end, str, pos)
+        local npos = match(val_end, input, pos)
         if not npos then return end
         pos = npos
       end
@@ -95,8 +97,8 @@ end
 local function ci(s)
   local p = P(true)
   for i = 1, #s do
-    local c = s:sub(i, i)
-    p = p * S(c:lower() .. c:upper())
+    local c = str.sub(s, i, i)
+    p = p * S(str.lower(c) .. str.upper(c))
   end
   return p
 end
@@ -117,33 +119,34 @@ local style = block_elem("style")
 
 local comment_cp, script_cp, style_cp, any_tag_cp, tag_name_only, block_elems
 
-local function html_text(str)
-  return wrap(function ()
+local function html_text(input)
+  local co = co_factory()
+  return co.wrap(function ()
     local buf = {}
     local pos = 1
-    local len = #str
+    local len = #input
     while pos <= len do
-      if str:byte(pos) == 60 then
-        local npos = match(comment_cp, str, pos)
-          or match(script_cp, str, pos)
-          or match(style_cp, str, pos)
+      if str.byte(input, pos) == 60 then
+        local npos = match(comment_cp, input, pos)
+          or match(script_cp, input, pos)
+          or match(style_cp, input, pos)
         if npos then
           if #buf > 0 then
             local text = arr.concat(buf)
             buf = {}
-            if #text > 0 then yield(text) end
+            if #text > 0 then co.yield(text) end
           end
           pos = npos
         else
-          local tname = match(tag_name_only, str, pos)
-          if tname and block_elems[tname:lower()] then
+          local tname = match(tag_name_only, input, pos)
+          if tname and block_elems[str.lower(tname)] then
             if #buf > 0 then
               local text = arr.concat(buf)
               buf = {}
-              if #text > 0 then yield(text) end
+              if #text > 0 then co.yield(text) end
             end
           end
-          npos = match(any_tag_cp, str, pos)
+          npos = match(any_tag_cp, input, pos)
           if npos then
             pos = npos
           else
@@ -152,15 +155,15 @@ local function html_text(str)
           end
         end
       else
-        local next_lt = str:find("<", pos, true)
+        local next_lt = str.find(input, "<", pos, true)
         local text_end = next_lt and (next_lt - 1) or len
-        buf[#buf + 1] = str:sub(pos, text_end)
+        buf[#buf + 1] = str.sub(input, pos, text_end)
         pos = text_end + 1
       end
     end
     if #buf > 0 then
       local text = arr.concat(buf)
-      if #text > 0 then yield(text) end
+      if #text > 0 then co.yield(text) end
     end
   end)
 end
@@ -207,24 +210,24 @@ block_elems = {
 
 tag_name_only = P("<") * P("/") ^ -1 * C(tag_name_ch ^ 1)
 
-local function html_extract(str)
+local function html_extract(input)
   local parts = {}
   local tags = {}
   local stack = {}
   local spos = 0
   local pos = 1
-  local len = #str
+  local len = #input
   while pos <= len do
-    if str:byte(pos) == 60 then
-      local npos = match(comment_cp, str, pos)
-        or match(script_cp, str, pos)
-        or match(style_cp, str, pos)
+    if str.byte(input, pos) == 60 then
+      local npos = match(comment_cp, input, pos)
+        or match(script_cp, input, pos)
+        or match(style_cp, input, pos)
       if npos then
         pos = npos
       else
-        local cname, cend = match(close_tag_cap, str, pos)
+        local cname, cend = match(close_tag_cap, input, pos)
         if cname then
-          local lname = cname:lower()
+          local lname = str.lower(cname)
           for i = #stack, 1, -1 do
             if stack[i].lname == lname then
               stack[i].e = spos
@@ -238,16 +241,16 @@ local function html_extract(str)
           end
           pos = cend
         else
-          local tname, raw, oend, is_self = match(open_tag_cap, str, pos)
+          local tname, raw, oend, is_self = match(open_tag_cap, input, pos)
           if tname then
-            if not is_self and not void_elems[tname:lower()] then
+            if not is_self and not void_elems[str.lower(tname)] then
               local attrs = {}
               for j = 1, #raw, 2 do
                 attrs[raw[j]] = raw[j + 1]
               end
               stack[#stack + 1] = {
                 name = tname,
-                lname = tname:lower(),
+                lname = str.lower(tname),
                 attrs = attrs,
                 s = spos + 1,
                 open_s = pos,
@@ -256,7 +259,7 @@ local function html_extract(str)
             end
             pos = oend
           else
-            npos = match(any_tag_cp, str, pos)
+            npos = match(any_tag_cp, input, pos)
             if npos then
               pos = npos
             else
@@ -268,9 +271,9 @@ local function html_extract(str)
         end
       end
     else
-      local next_lt = str:find("<", pos, true)
+      local next_lt = str.find(input, "<", pos, true)
       local text_end = next_lt and (next_lt - 1) or len
-      parts[#parts + 1] = str:sub(pos, text_end)
+      parts[#parts + 1] = str.sub(input, pos, text_end)
       spos = spos + (text_end - pos + 1)
       pos = text_end + 1
     end
@@ -279,8 +282,8 @@ local function html_extract(str)
   return arr.concat(parts), tags
 end
 
-local function html_tags(str)
-  local _, tags = html_extract(str)
+local function html_tags(input)
+  local _, tags = html_extract(input)
   local i = 0
   return function ()
     i = i + 1
@@ -300,7 +303,7 @@ local function html_inject(text, tags, attr_order)
   for i = 1, #sorted do
     local t = sorted[i]
     if t.s > pos then
-      parts[#parts + 1] = text:sub(pos, t.s - 1)
+      parts[#parts + 1] = str.sub(text, pos, t.s - 1)
     end
     parts[#parts + 1] = "<" .. t.name
     if t.attrs then
@@ -310,7 +313,7 @@ local function html_inject(text, tags, attr_order)
         if v == true then
           parts[#parts + 1] = " " .. k
         else
-          parts[#parts + 1] = " " .. k .. "=\"" .. v:gsub("\"", "&quot;") .. "\""
+          parts[#parts + 1] = " " .. k .. "=\"" .. (str.gsub(v, "\"", "&quot;")) .. "\""
         end
       end
       if attr_order then
@@ -327,12 +330,12 @@ local function html_inject(text, tags, attr_order)
       end
     end
     parts[#parts + 1] = ">"
-    parts[#parts + 1] = t.text or text:sub(t.s, t.e)
+    parts[#parts + 1] = t.text or str.sub(text, t.s, t.e)
     parts[#parts + 1] = "</" .. t.name .. ">"
     pos = t.e + 1
   end
   if pos <= #text then
-    parts[#parts + 1] = text:sub(pos)
+    parts[#parts + 1] = str.sub(text, pos)
   end
   return arr.concat(parts)
 end
@@ -372,7 +375,7 @@ local function scan_close(patt, html, from)
   while s do
     local a, b = match(patt, html, s)
     if a then return a, b end
-    s = html:find("<", s + 1, true)
+    s = str.find(html, "<", s + 1, true)
   end
 end
 
@@ -385,7 +388,7 @@ local function component_parts(html)
   local pos = 1
   local len = #html
   while pos <= len do
-    local lt = html:find("<", pos, true)
+    local lt = str.find(html, "<", pos, true)
     if not lt then break end
     local sc_start, sc_raw, sc_inner = match(script_open_cap, html, lt)
     local sc_self_start, sc_self_raw, sc_self_end = match(script_self_cap, html, lt)
@@ -417,16 +420,16 @@ local function component_parts(html)
       if attrs.src then
         deps[#deps + 1] = attrs.src
       elseif attrs.type == "destroy" then
-        destroy = html:sub(sc_inner, close_start - 1)
+        destroy = str.sub(html, sc_inner, close_start - 1)
       else
-        init = html:sub(sc_inner, close_start - 1)
+        init = str.sub(html, sc_inner, close_start - 1)
       end
       ranges[#ranges + 1] = { sc_start, close_end - 1 }
       pos = close_end
     elseif pick[2] == "style" then
       local close_start, close_end = scan_close(style_close_cap, html, st_inner)
       if not close_start then break end
-      style_content = html:sub(st_inner, close_start - 1)
+      style_content = str.sub(html, st_inner, close_start - 1)
       ranges[#ranges + 1] = { st_start, close_end - 1 }
       pos = close_end
     end end
@@ -436,14 +439,14 @@ local function component_parts(html)
   local bp = 1
   for i = 1, #ranges do
     if ranges[i][1] > bp then
-      body_parts[#body_parts + 1] = html:sub(bp, ranges[i][1] - 1)
+      body_parts[#body_parts + 1] = str.sub(html, bp, ranges[i][1] - 1)
     end
     bp = ranges[i][2] + 1
   end
   if bp <= len then
-    body_parts[#body_parts + 1] = html:sub(bp)
+    body_parts[#body_parts + 1] = str.sub(html, bp)
   end
-  local body = arr.concat(body_parts):match("^%s*(.-)%s*$") or ""
+  local body = str.match(arr.concat(body_parts), "^%s*(.-)%s*$") or ""
   return {
     deps = deps,
     style = style_content,
@@ -460,7 +463,7 @@ local function minify_html(html)
   local pos = 1
   local len = #html
   while pos <= len do
-    if html:byte(pos) == 60 then
+    if str.byte(html, pos) == 60 then
       local npos = match(comment_cp, html, pos)
       if npos then
         pos = npos
@@ -470,12 +473,12 @@ local function minify_html(html)
           or match(script_cp, html, pos)
           or match(style_cp, html, pos)
         if npos then
-          parts[#parts + 1] = html:sub(pos, npos - 1)
+          parts[#parts + 1] = str.sub(html, pos, npos - 1)
           pos = npos
         else
           local tag_end = match(any_tag_cp, html, pos)
           if tag_end then
-            parts[#parts + 1] = html:sub(pos, tag_end - 1)
+            parts[#parts + 1] = str.sub(html, pos, tag_end - 1)
             pos = tag_end
           else
             parts[#parts + 1] = "<"
@@ -484,9 +487,9 @@ local function minify_html(html)
         end
       end
     else
-      local next_lt = html:find("<", pos, true)
+      local next_lt = str.find(html, "<", pos, true)
       local text_end = next_lt and (next_lt - 1) or len
-      local text = html:sub(pos, text_end):gsub("%s+", " ")
+      local text = str.gsub(str.sub(html, pos, text_end), "%s+", " ")
       if text ~= " " then
         parts[#parts + 1] = text
       end
@@ -494,7 +497,7 @@ local function minify_html(html)
     end
   end
   local result = arr.concat(parts)
-  return result:match("^%s*(.-)%s*$") or ""
+  return str.match(result, "^%s*(.-)%s*$") or ""
 end
 
 local function transform_inline(html, transforms)
@@ -506,7 +509,7 @@ local function transform_inline(html, transforms)
   local pos = 1
   local len = #html
   while pos <= len do
-    local lt = html:find("<", pos, true)
+    local lt = str.find(html, "<", pos, true)
     if not lt then break end
     local handled = false
     if js_fn then
@@ -519,7 +522,7 @@ local function transform_inline(html, transforms)
         if not attrs.src then
           local close_start, close_end = scan_close(script_close_cap, html, sc_inner)
           if close_start then
-            replacements[#replacements + 1] = { sc_inner, close_start - 1, js_fn(html:sub(sc_inner, close_start - 1)) }
+            replacements[#replacements + 1] = { sc_inner, close_start - 1, js_fn(str.sub(html, sc_inner, close_start - 1)) }
             pos = close_end
             handled = true
           end
@@ -531,7 +534,7 @@ local function transform_inline(html, transforms)
       if st_start then
         local close_start, close_end = scan_close(style_close_cap, html, st_inner)
         if close_start then
-          replacements[#replacements + 1] = { st_inner, close_start - 1, css_fn(html:sub(st_inner, close_start - 1)) }
+          replacements[#replacements + 1] = { st_inner, close_start - 1, css_fn(str.sub(html, st_inner, close_start - 1)) }
           pos = close_end
           handled = true
         end
@@ -546,26 +549,26 @@ local function transform_inline(html, transforms)
   local bp = 1
   for i = 1, #replacements do
     local r = replacements[i]
-    parts[#parts + 1] = html:sub(bp, r[1] - 1)
+    parts[#parts + 1] = str.sub(html, bp, r[1] - 1)
     parts[#parts + 1] = r[3]
     bp = r[2] + 1
   end
-  parts[#parts + 1] = html:sub(bp)
+  parts[#parts + 1] = str.sub(html, bp)
   return arr.concat(parts)
 end
 
 local csv_dq = P("\"")
 local csv_field_q = csv_dq * C(((1 - csv_dq) + (csv_dq * csv_dq)) ^ 0) * csv_dq
-  / function (s) return (s:gsub("\"\"", "\"")) end
+  / function (s) return (str.gsub(s, "\"\"", "\"")) end
 local csv_field_u = C((1 - S(",\r\n")) ^ 0)
 local csv_field = csv_field_q + csv_field_u
 local csv_record = Ct(csv_field * (P(",") * csv_field) ^ 0)
 local csv_nl = P("\r\n") + P("\n") + P("\r")
 local csv_doc = Ct(csv_record * (csv_nl * csv_record) ^ 0) * csv_nl ^ -1
 
-local function csv (str)
-  if str:sub(1, 3) == "\239\187\191" then str = str:sub(4) end
-  local rows = match(csv_doc, str)
+local function csv (input)
+  if str.sub(input, 1, 3) == "\239\187\191" then input = str.sub(input, 4) end
+  local rows = match(csv_doc, input)
   if not rows then return {} end
   local out = {}
   for i = 1, #rows do

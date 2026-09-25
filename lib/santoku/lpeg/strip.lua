@@ -776,22 +776,22 @@ local function shebang_lang (src)
   if byte(src, 1) ~= 35 or byte(src, 2) ~= 33 then return nil end
   local stop = (find(src, "\n", 1, true) or (#src + 1)) - 1
   local words = {}
-  for w in sub(src, 3, stop):gmatch("%S+") do words[#words + 1] = w end
+  for w in str.gmatch(sub(src, 3, stop), "%S+") do words[#words + 1] = w end
   local first = words[1]
   if not first then return nil end
-  first = first:match("[^/\\]+$")
+  first = str.match(first, "[^/\\]+$")
   if first == "env" then
     first = nil
     for i = 2, #words do
       local w = words[i]
       if not find(w, "=", 1, true) and sub(w, 1, 1) ~= "-" then
-        first = w:match("[^/\\]+$")
+        first = str.match(w, "[^/\\]+$")
         break
       end
     end
     if not first then return nil end
   end
-  return shebang_map[first] or shebang_map[first:match("^%a+") or ""]
+  return shebang_map[first] or shebang_map[str.match(first, "^%a+") or ""]
 end
 
 local grammars = {
@@ -985,7 +985,7 @@ local function collapse_marked (src, prot)
     local nl = find(src, "\n", pos, true)
     local last = nl or len
     local text = sub(src, pos, nl and (nl - 1) or len)
-    if nl and not prot[nl] and text:match("^[ \t\r]*$") then
+    if nl and not prot[nl] and str.match(text, "^[ \t\r]*$") then
       blanks = blanks + 1
       if blanks <= 1 then
         out[#out + 1] = sub(src, pos, last)
@@ -1031,16 +1031,16 @@ local function collapse_blanks (src, lang, templated)
 end
 
 local function split_ext (filename)
-  local base = filename:match("[^/\\]+$") or filename
-  local tk = base:match("%.tk%.([%w]+)$")
+  local base = str.match(filename, "[^/\\]+$") or filename
+  local tk = str.match(base, "%.tk%.([%w]+)$")
   if tk then
-    return true, tk:lower()
+    return true, str.lower(tk)
   end
-  tk = base:match("%.([%w]+)%.tk$")
+  tk = str.match(base, "%.([%w]+)%.tk$")
   if tk then
-    return true, tk:lower()
+    return true, str.lower(tk)
   end
-  if base:match("%.tk$") then
+  if str.match(base, "%.tk$") then
     return true, nil
   end
   return false, base
@@ -1054,11 +1054,11 @@ local function tk_directive (src)
     local e = (find(src, "\n", pos, true) or (len + 1)) - 1
     local line = sub(src, pos, e)
     local lang =
-      line:match("^%s*#+%s*tk:%s*([%w]+)") or
-      line:match("^%s*%-%-%s*tk:%s*([%w]+)") or
-      line:match("^%s*//%s*tk:%s*([%w]+)") or
-      line:match("^%s*;+%s*tk:%s*([%w]+)")
-    if lang then return lang:lower() end
+      str.match(line, "^%s*#+%s*tk:%s*([%w]+)") or
+      str.match(line, "^%s*%-%-%s*tk:%s*([%w]+)") or
+      str.match(line, "^%s*//%s*tk:%s*([%w]+)") or
+      str.match(line, "^%s*;+%s*tk:%s*([%w]+)")
+    if lang then return str.lower(lang) end
     pos = e + 2
   end
   return nil
@@ -1067,8 +1067,8 @@ end
 local function lang_for (src, base)
   local nm = name_map[base]
   if nm then return nm end
-  local ext = base:match("%.([%w]+)$")
-  if ext then return ext:lower() end
+  local ext = str.match(base, "%.([%w]+)$")
+  if ext then return str.lower(ext) end
   return shebang_lang(src)
 end
 
