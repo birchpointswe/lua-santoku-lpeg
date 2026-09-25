@@ -44,6 +44,12 @@ test("santoku.re", function ()
     assert(next(none) == nil)
   end)
 
+  test("tags: a reused group name is refused", function ()
+    local ok, msg = re.check("{:x: 'a' :} / {:x: 'b' :}")
+    assert(ok == nil and msg:find("reuses a group name", 1, true))
+    assert(not pcall(re.tags, "{:x: 'a' :} / {:x: 'b' :}"))
+  end)
+
   test("pmatch: state-free NOLUA path", function ()
     local e = re.pmatch("%a+", "hello123")
     assert(e == 5)

@@ -26,20 +26,33 @@ static int tk_re_build (lua_State *L, int idx, tk_re_prog_t *out, const char **e
     if (op == IOpenCapture || op == IFullCapture) {
       int k = getkind(p);
       if (k == Cgroup) {
-        int key = p->i.aux2.key;
+        unsigned short key = (unsigned short) p->i.aux2.key;
         if (key != 0) {
           int found = -1, t;
           for (t = 0; t < ntags; t++)
-            if (keys[t] == (unsigned short) key) { found = t; break; }
-          if (found < 0 && ntags <= MAXAUX) {
+            if (keys[t] == key) { found = t; break; }
+          if (found < 0) {
             const char *nm;
+            if (ntags > MAXAUX) {
+              *err = "pattern has more named groups than the parallel tier supports";
+              goto invalid;
+            }
             lua_getuservalue(L, idx);
-            lua_rawgeti(L, -1, key);
+            lua_rawgeti(L, -1, (int) key);
             nm = lua_tostring(L, -1);
-            names[ntags] = tk_re_strdup(nm ? nm : "");
-            keys[ntags] = (unsigned short) key;
-            ntags++;
+            if (!nm) nm = "";
+            for (t = 0; t < ntags; t++)
+              if (strcmp(names[t], nm) == 0) break;
+            if (t < ntags) {
+              lua_pop(L, 2);
+              *err = "pattern reuses a group name; each named group needs a unique name";
+              goto invalid;
+            }
+            names[ntags] = tk_re_strdup(nm);
             lua_pop(L, 2);
+            if (!names[ntags]) { *err = "out of memory"; goto invalid; }
+            keys[ntags] = key;
+            ntags++;
           }
         }
       } else if (k != Cposition && k != Cclose) {
