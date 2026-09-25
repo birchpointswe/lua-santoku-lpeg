@@ -115,14 +115,15 @@ static inline const char *tk_re_utf8_decode (const char *o, const char *e, int *
   return (const char *) s + 1;
 }
 
-static inline void tk_re_scratch_init (tk_re_scratch_t *sc) {
+static inline int tk_re_scratch_init (tk_re_scratch_t *sc) {
   sc->stack_cap = 100;
   sc->stack = (tk_re_stack_t *) malloc(sc->stack_cap * sizeof(tk_re_stack_t));
   sc->caps_cap = TK_RE_INITCAP;
   sc->caps = (tk_re_capture_t *) malloc(sc->caps_cap * sizeof(tk_re_capture_t));
   sc->ceiling = TK_RE_INITBACK;
   sc->ncaps = 0;
-  sc->status = TK_RE_OK;
+  sc->status = (sc->stack && sc->caps) ? TK_RE_OK : TK_RE_EOOM;
+  return sc->status == TK_RE_OK ? 0 : -1;
 }
 
 static inline void tk_re_scratch_free (tk_re_scratch_t *sc) {
@@ -173,6 +174,7 @@ static inline int64_t tk_re_match (const tk_re_prog_t *prog, const char *subject
   tk_re_stack_t *stack, *stacklimit;
   tk_re_capture_t *capture;
   int capsize, captop = 0;
+  if (!sc->stack || !sc->caps) { sc->status = TK_RE_EOOM; return -2; }
   if (len >= (size_t) TK_RE_MAXINDT) { sc->status = TK_RE_ELEN; return -2; }
   if (init > len) init = len;
   s = subject + init;

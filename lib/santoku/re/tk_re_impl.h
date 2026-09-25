@@ -9,6 +9,9 @@ static char *tk_re_strdup (const char *s) {
 static int tk_re_build (lua_State *L, int idx, tk_re_prog_t *out, const char **err) {
   Pattern *pat;
   Instruction *code, *p;
+  tk_re_inst_t *copy;
+  char **tn;
+  unsigned short *tk;
   unsigned short keys[MAXAUX + 1];
   char *names[MAXAUX + 1];
   int ntags = 0, n, i;
@@ -61,21 +64,23 @@ static int tk_re_build (lua_State *L, int idx, tk_re_prog_t *out, const char **e
       }
     }
   }
-  out->code = (tk_re_inst_t *) malloc((size_t) n * sizeof(tk_re_inst_t));
-  if (!out->code) { *err = "out of memory"; goto invalid; }
-  memcpy(out->code, code, (size_t) n * sizeof(Instruction));
-  out->codesize = n;
-  out->ntags = ntags;
-  out->tagnames = ntags ? (char **) malloc((size_t) ntags * sizeof(char *)) : NULL;
-  out->tagkeys = ntags ? (unsigned short *) malloc((size_t) ntags * sizeof(unsigned short)) : NULL;
-  if (ntags && (!out->tagnames || !out->tagkeys)) {
-    free(out->tagnames);
-    free(out->tagkeys);
-    free(out->code);
+  copy = (tk_re_inst_t *) malloc((size_t) n * sizeof(tk_re_inst_t));
+  tn = ntags ? (char **) malloc((size_t) ntags * sizeof(char *)) : NULL;
+  tk = ntags ? (unsigned short *) malloc((size_t) ntags * sizeof(unsigned short)) : NULL;
+  if (!copy || (ntags && (!tn || !tk))) {
+    free(copy);
+    free(tn);
+    free(tk);
     *err = "out of memory";
     goto invalid;
   }
-  for (i = 0; i < ntags; i++) { out->tagnames[i] = names[i]; out->tagkeys[i] = keys[i]; }
+  memcpy(copy, code, (size_t) n * sizeof(Instruction));
+  for (i = 0; i < ntags; i++) { tn[i] = names[i]; tk[i] = keys[i]; }
+  out->code = copy;
+  out->codesize = n;
+  out->ntags = ntags;
+  out->tagnames = tn;
+  out->tagkeys = tk;
   return 0;
 invalid:
   for (i = 0; i < ntags; i++) free(names[i]);
@@ -97,16 +102,19 @@ static int tk_re_prog_gc (lua_State *L) {
   return 0;
 }
 
-static int l_re_prog (lua_State *L) {
-  tk_re_prog_t built;
+static tk_re_prog_t *tk_re_prog_push (lua_State *L, int idx) {
   const char *err = NULL;
-  tk_re_prog_t *pu;
-  if (tk_re_build(L, 1, &built, &err) != 0)
-    return luaL_error(L, "santoku.re: %s", err);
-  pu = (tk_re_prog_t *) lua_newuserdata(L, sizeof(tk_re_prog_t));
-  *pu = built;
+  tk_re_prog_t *pu = (tk_re_prog_t *) lua_newuserdata(L, sizeof(tk_re_prog_t));
+  memset(pu, 0, sizeof(tk_re_prog_t));
   luaL_getmetatable(L, TK_RE_PROG_MT);
   lua_setmetatable(L, -2);
+  if (tk_re_build(L, idx, pu, &err) != 0)
+    luaL_error(L, "santoku.re: %s", err);
+  return pu;
+}
+
+static int l_re_prog (lua_State *L) {
+  tk_re_prog_push(L, 1);
   return 1;
 }
 
@@ -122,17 +130,13 @@ static int l_re_check (lua_State *L) {
 }
 
 static int l_re_tags (lua_State *L) {
-  tk_re_prog_t prog;
-  const char *err = NULL;
+  tk_re_prog_t *prog = tk_re_prog_push(L, 1);
   int i;
-  if (tk_re_build(L, 1, &prog, &err) != 0)
-    return luaL_error(L, "santoku.re: %s", err);
-  lua_createtable(L, 0, prog.ntags);
-  for (i = 0; i < prog.ntags; i++) {
+  lua_createtable(L, 0, prog->ntags);
+  for (i = 0; i < prog->ntags; i++) {
     lua_pushinteger(L, i);
-    lua_setfield(L, -2, prog.tagnames[i]);
+    lua_setfield(L, -2, prog->tagnames[i]);
   }
-  tk_re_prog_freeparts(&prog);
   return 1;
 }
 
@@ -140,22 +144,22 @@ static int l_re_pmatch (lua_State *L) {
   size_t len;
   const char *s = luaL_checklstring(L, 2, &len);
   lua_Integer init = luaL_optinteger(L, 3, 1);
-  tk_re_prog_t prog;
+  tk_re_prog_t *prog;
   tk_re_scratch_t sc;
-  const char *err = NULL;
   int64_t r;
-  int ret;
+  int status, ncaps;
   if (init < 1) init = 1;
-  if (tk_re_build(L, 1, &prog, &err) != 0)
-    return luaL_error(L, "santoku.re: %s", err);
+  prog = tk_re_prog_push(L, 1);
   tk_re_scratch_init(&sc);
-  r = tk_re_match(&prog, s, len, (size_t)(init - 1), &sc);
-  if (r == -1) { lua_pushnil(L); ret = 1; }
-  else if (r < 0) { lua_pushnil(L); lua_pushfstring(L, "match error %d", sc.status); ret = 2; }
-  else { lua_pushinteger(L, (lua_Integer) r); lua_pushinteger(L, sc.ncaps); ret = 2; }
+  r = tk_re_match(prog, s, len, (size_t)(init - 1), &sc);
+  status = sc.status;
+  ncaps = sc.ncaps;
   tk_re_scratch_free(&sc);
-  tk_re_prog_freeparts(&prog);
-  return ret;
+  if (r == -1) { lua_pushnil(L); return 1; }
+  if (r < 0) { lua_pushnil(L); lua_pushfstring(L, "match error %d", status); return 2; }
+  lua_pushinteger(L, (lua_Integer) r);
+  lua_pushinteger(L, ncaps);
+  return 2;
 }
 
 static const luaL_Reg tk_re_extra[] = {
