@@ -73,7 +73,7 @@ typedef struct {
   int status;
 } tk_re_scratch_t;
 
-enum { TK_RE_OK = 0, TK_RE_ESTACK, TK_RE_ECAPS, TK_RE_ERUNTIME, TK_RE_EOOM };
+enum { TK_RE_OK = 0, TK_RE_ESTACK, TK_RE_ECAPS, TK_RE_ERUNTIME, TK_RE_EOOM, TK_RE_ELEN };
 
 #define TK_RE_INITBACK   400
 #define TK_RE_INITCAP    32
@@ -92,7 +92,7 @@ static inline int tk_re_charinset (const tk_re_inst_t *i, const tk_re_byte *buff
   return tk_re_testchar(buff, c);
 }
 
-static inline const char *tk_re_utf8_decode (const char *o, int *val) {
+static inline const char *tk_re_utf8_decode (const char *o, const char *e, int *val) {
   static const tk_re_uint limits[] = {0xFF, 0x7F, 0x7FF, 0xFFFFu};
   const unsigned char *s = (const unsigned char *) o;
   tk_re_uint c = s[0], res = 0;
@@ -100,7 +100,9 @@ static inline const char *tk_re_utf8_decode (const char *o, int *val) {
   else {
     int count = 0;
     while (c & 0x40) {
-      int cc = s[++count];
+      int cc;
+      if (o + count + 1 >= e) return NULL;
+      cc = s[++count];
       if ((cc & 0xC0) != 0x80) return NULL;
       res = (res << 6) | (cc & 0x3F);
       c <<= 1;
@@ -171,6 +173,7 @@ static inline int64_t tk_re_match (const tk_re_prog_t *prog, const char *subject
   tk_re_stack_t *stack, *stacklimit;
   tk_re_capture_t *capture;
   int capsize, captop = 0;
+  if (len >= (size_t) TK_RE_MAXINDT) { sc->status = TK_RE_ELEN; return -2; }
   if (init > len) init = len;
   s = subject + init;
   sc->status = TK_RE_OK;
@@ -195,7 +198,7 @@ static inline int64_t tk_re_match (const tk_re_prog_t *prog, const char *subject
       case TK_RE_IUTFR: {
         int cp;
         if (s >= e) goto fail;
-        s = tk_re_utf8_decode(s, &cp);
+        s = tk_re_utf8_decode(s, e, &cp);
         if (s && p[1].offset <= cp && cp <= tk_re_utf_to(p)) p += 2;
         else goto fail;
         continue;
@@ -204,23 +207,19 @@ static inline int64_t tk_re_match (const tk_re_prog_t *prog, const char *subject
         if (s < e) p += 2; else p += tk_re_getoffset(p);
         continue;
       case TK_RE_IChar:
-        if ((tk_re_byte) *s == p->i.aux1 && s < e) { p++; s++; } else goto fail;
+        if (s < e && (tk_re_byte) *s == p->i.aux1) { p++; s++; } else goto fail;
         continue;
       case TK_RE_ITestChar:
-        if ((tk_re_byte) *s == p->i.aux1 && s < e) p += 2; else p += tk_re_getoffset(p);
+        if (s < e && (tk_re_byte) *s == p->i.aux1) p += 2; else p += tk_re_getoffset(p);
         continue;
-      case TK_RE_ISet: {
-        tk_re_uint c = (tk_re_byte) *s;
-        if (tk_re_charinset(p, (p + 1)->buff, c) && s < e) { p += 1 + p->i.aux2.set.size; s++; }
+      case TK_RE_ISet:
+        if (s < e && tk_re_charinset(p, (p + 1)->buff, (tk_re_byte) *s)) { p += 1 + p->i.aux2.set.size; s++; }
         else goto fail;
         continue;
-      }
-      case TK_RE_ITestSet: {
-        tk_re_uint c = (tk_re_byte) *s;
-        if (tk_re_charinset(p, (p + 2)->buff, c) && s < e) p += 2 + p->i.aux2.set.size;
+      case TK_RE_ITestSet:
+        if (s < e && tk_re_charinset(p, (p + 2)->buff, (tk_re_byte) *s)) p += 2 + p->i.aux2.set.size;
         else p += tk_re_getoffset(p);
         continue;
-      }
       case TK_RE_IBehind: {
         int n = p->i.aux1;
         if (n > s - o) goto fail;
