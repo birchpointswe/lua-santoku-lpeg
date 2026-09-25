@@ -106,8 +106,6 @@ local String = "'" * m.C((any - "'")^0) * "'" +
                '"' * m.C((any - '"')^0) * '"'
 
 
--- santoku.re: user definitions tables are dropped, so '%name' resolves only
--- against the predefined character classes (%a %d %w %s ...).
 local defined = "%" * name / function (c)
   local cat = Predef[c]
   if not cat then error ("name '" .. c .. "' undefined") end
@@ -160,10 +158,6 @@ local exp = m.P{ "Exp",
             + "^" * ( m.Cg(num * m.Cc(mult))
                     + m.Cg(m.C(m.S"+-" * m.R"09"^1) * m.Cc(mt.__pow))
                     )
-            -- santoku.re: only literal string/number transforms survive (they
-            -- compile to value captures, usable on the serial tier; the
-            -- parallel prog builder rejects them). Function/defs-based
-            -- transforms (-> f, => f, >> f, ~> f) and %def tables are dropped.
             + "->" * S * m.Cg((String + num) * m.Cc(mt.__div))
             ) % function (a,b,f) return f(a,b) end * S
           )^0;
@@ -236,7 +230,6 @@ local re = {
   match = match,
   find = find,
   gsub = gsub,
-  updatelocale = updatelocale,
 }
 
 return re

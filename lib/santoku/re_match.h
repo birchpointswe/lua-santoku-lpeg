@@ -1,20 +1,4 @@
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef SANTOKU_RE_MATCH_H
 #define SANTOKU_RE_MATCH_H
 
@@ -30,7 +14,6 @@
 typedef unsigned char tk_re_byte;
 typedef unsigned int  tk_re_uint;
 
-
 typedef union tk_re_inst_s {
   struct {
     tk_re_byte code;
@@ -45,7 +28,6 @@ typedef union tk_re_inst_s {
   tk_re_byte buff[1];
 } tk_re_inst_t;
 
-
 enum {
   TK_RE_IAny, TK_RE_IChar, TK_RE_ISet, TK_RE_ITestAny, TK_RE_ITestChar,
   TK_RE_ITestSet, TK_RE_ISpan, TK_RE_IUTFR, TK_RE_IBehind, TK_RE_IRet,
@@ -54,7 +36,6 @@ enum {
   TK_RE_IFail, TK_RE_IGiveup, TK_RE_IFullCapture, TK_RE_IOpenCapture,
   TK_RE_ICloseCapture, TK_RE_ICloseRunTime, TK_RE_IEmpty
 };
-
 
 enum {
   TK_RE_Cclose = 0, TK_RE_Cposition = 1, TK_RE_Cgroup = 15
@@ -76,7 +57,6 @@ typedef struct {
   int caplevel;
 } tk_re_stack_t;
 
-
 typedef struct {
   tk_re_inst_t *code;
   int codesize;
@@ -84,7 +64,6 @@ typedef struct {
   char **tagnames;
   unsigned short *tagkeys;
 } tk_re_prog_t;
-
 
 typedef struct {
   tk_re_stack_t *stack;   size_t stack_cap;
@@ -173,7 +152,6 @@ static inline tk_re_capture_t *tk_re_growcap (tk_re_scratch_t *sc, int *capsize,
   return nc;
 }
 
-
 static inline tk_re_capture_t *tk_re_findopen (tk_re_capture_t *cap, tk_re_index_t currindex) {
   int i;
   cap--;
@@ -185,9 +163,6 @@ static inline tk_re_capture_t *tk_re_findopen (tk_re_capture_t *cap, tk_re_index
   }
   return NULL;
 }
-
-
-
 
 static inline int64_t tk_re_match (const tk_re_prog_t *prog, const char *subject,
                                    size_t len, size_t init, tk_re_scratch_t *sc) {
@@ -325,9 +300,6 @@ static inline int64_t tk_re_match (const tk_re_prog_t *prog, const char *subject
 static inline tk_re_prog_t *tk_re_prog_peek (lua_State *L, int i) {
   return (tk_re_prog_t *) luaL_checkudata(L, i, TK_RE_PROG_MT);
 }
-
-static inline int tk_re_ncaps (const tk_re_scratch_t *sc) { return sc->ncaps; }
-
 
 static inline int tk_re_cap_tag (const tk_re_prog_t *prog, const tk_re_capture_t *c) {
   int t;

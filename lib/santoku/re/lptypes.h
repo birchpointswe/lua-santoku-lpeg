@@ -37,12 +37,6 @@
 #ifndef luaL_setfuncs
 #define luaL_setfuncs(L,f,n)	luaL_register(L,NULL,f)
 #endif
-/* luaL_newlib is unused by santoku.re (luaopen builds the table explicitly to
-** avoid the 5.1 global "lpeg" leak); guard it so it never clashes with a host
-** that already provides it (e.g. LuaJIT). */
-#ifndef luaL_newlib
-#define luaL_newlib(L,f)	luaL_register(L,NULL,f)
-#endif
 
 typedef size_t lua_Unsigned;
 

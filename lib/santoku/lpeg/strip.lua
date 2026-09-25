@@ -26,8 +26,7 @@ local function is_subseq (out, src)
   return true
 end
 
-local function guard (out, src, bailed)
-  if bailed then return src, true end
+local function guard (out, src)
   if out == src then return src, false end
   if not is_subseq(out, src) then return src, true end
   return out, false
@@ -169,7 +168,7 @@ end
 drive_grammar = function (patt, src)
   local toks = grammar_toks(patt, src)
   if not toks then return src, true end
-  return guard(render(src, toks), src, false)
+  return guard(render(src, toks), src)
 end
 
 local function dir_ahead (list)
@@ -883,7 +882,7 @@ local function strip_template (src, output_lang)
   if not toks then return src, true end
   local out = render_tmpl(src, toks)
   if not out then return src, true end
-  return guard(out, src, false)
+  return guard(out, src)
 end
 
 local license_markers = {
@@ -1119,7 +1118,6 @@ end
 return {
   strip = strip,
   coverage = coverage,
-  license_head = license_head,
   strip_lua = strip_lua,
   strip_c = strip_c,
   strip_js = strip_js,

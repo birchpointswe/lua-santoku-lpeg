@@ -1382,10 +1382,6 @@ static struct luaL_Reg metareg[] = {
 };
 
 
-/* santoku.re: vendored lpeg core registration. Builds the pattern table
-** explicitly (no global "lpeg" leak from the 5.1 luaL_newlib compat) and
-** leaves it on top of the stack. The public luaopen_santoku_re_core (in
-** core.c) calls this and then appends the tk_re additions. */
 static int tk_re_open_core (lua_State *L) {
   luaL_newmetatable(L, PATTERN_T);
   lua_pushnumber(L, MAXBACK);  /* initialize maximum backtracking */
