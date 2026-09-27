@@ -754,7 +754,7 @@ local ext_map = {
   yml = strip_yaml, yaml = strip_yaml,
   dockerfile = strip_dockerfile,
   service = strip_unit, timer = strip_unit, socket = strip_unit,
-  json = false, md = false, txt = false, gitignore = false,
+  json = false, md = false, txt = false, gitignore = false, patch = false, diff = false,
   svg = false, png = false, jpg = false, jpeg = false, gif = false,
   webp = false, ico = false, woff = false, woff2 = false, ttf = false,
   eot = false, pdf = false, gz = false, zip = false, tar = false,
