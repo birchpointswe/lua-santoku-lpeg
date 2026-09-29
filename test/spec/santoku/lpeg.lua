@@ -187,6 +187,66 @@ test("html_inject", function ()
 
 end)
 
+test("html_spans", function ()
+
+  test("converts tag positions to aho spans", function ()
+    local tags = {
+      { s = 1, e = 4 },
+      { s = 10, e = 15 },
+    }
+    local spans = lp.html_spans(tags)
+    assert(spans:size() == 2)
+    local a0, b0 = spans:get(0)
+    assert(a0 == 0)
+    assert(b0 == 4)
+    local a1, b1 = spans:get(1)
+    assert(a1 == 9)
+    assert(b1 == 15)
+  end)
+
+end)
+
+test("html_match_tags", function ()
+
+  test("converts ivec results to tag records", function ()
+    local mock = {
+      _data = {},
+      size = function (self) return #self._data end,
+      get = function (self, i) return self._data[i + 1] end,
+    }
+    local ids = setmetatable({ _data = { 10, 20 } }, { __index = mock })
+    local starts = setmetatable({ _data = { 0, 8 } }, { __index = mock })
+    local ends = setmetatable({ _data = { 4, 15 } }, { __index = mock })
+    local names = { [10] = "alpha", [20] = "beta" }
+    local tags = lp.html_match_tags(ids, starts, ends, names, "pred ")
+    assert(#tags == 2)
+    assert(tags[1].name == "span")
+    assert(tags[1].s == 1)
+    assert(tags[1].e == 4)
+    assert(tags[1].attrs.class == "pred alpha")
+    assert(tags[2].s == 9)
+    assert(tags[2].e == 15)
+    assert(tags[2].attrs.class == "pred beta")
+  end)
+
+  test("works without names or prefix", function ()
+    local mock = {
+      _data = {},
+      size = function (self) return #self._data end,
+      get = function (self, i) return self._data[i + 1] end,
+    }
+    local ids = setmetatable({ _data = { 5 } }, { __index = mock })
+    local starts = setmetatable({ _data = { 2 } }, { __index = mock })
+    local ends = setmetatable({ _data = { 7 } }, { __index = mock })
+    local tags = lp.html_match_tags(ids, starts, ends)
+    assert(#tags == 1)
+    assert(tags[1].attrs.class == "5")
+    assert(tags[1].s == 3)
+    assert(tags[1].e == 7)
+  end)
+
+end)
+
 test("minify_html", function ()
 
   test("strips comments and collapses whitespace", function ()
