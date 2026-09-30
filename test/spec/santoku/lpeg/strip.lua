@@ -980,6 +980,13 @@ test("license headers", function ()
     assert(strip.strip(src, "a.c") == "// SPDX-License-Identifier: MIT\nint x;\n")
   end)
 
+  test("two-line spdx header survives after a shebang", function ()
+    local src = "#!/usr/bin/env lua\n-- SPDX-License-Identifier: MIT\n" ..
+      "-- SPDX-FileCopyrightText: 2023 Birch Point SWE\n\nlocal x = 1 -- gone\n"
+    assert(strip.strip(src, "a.lua") == "#!/usr/bin/env lua\n-- SPDX-License-Identifier: MIT\n" ..
+      "-- SPDX-FileCopyrightText: 2023 Birch Point SWE\n\nlocal x = 1\n")
+  end)
+
   test("ordinary head comment is still stripped", function ()
     local src = "/* just a description */\nint x;\n"
     assert(strip.strip(src, "a.c") == "int x;\n")

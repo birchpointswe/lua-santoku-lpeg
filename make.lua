@@ -1,13 +1,13 @@
 local env = {
   name = "santoku-lpeg",
-  version = "2.2.1-1",
+  version = "2.2.2-1",
   variable_prefix = "TK_LPEG",
   license = "MIT",
   public = true,
   dependencies = {
     "lua == 5.1",
-    "santoku >= 2.0.0, < 3.0.0",
-    "santoku-matrix >= 2.0.0, < 3.0.0",
+    "santoku >= 2.5.0, < 3.0.0",
+    "santoku-matrix >= 3.0.2, < 4.0.0",
   },
 }
 
