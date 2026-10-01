@@ -1,10 +1,5 @@
-
-
-
-
-
-
-
+-- SPDX-License-Identifier: MIT
+-- SPDX-FileCopyrightText: 2026 Birch Point SWE
 
 local core = require("santoku.re.core")
 local grammar = require("santoku.re.grammar")
@@ -16,25 +11,17 @@ M.match = grammar.match
 M.find = grammar.find
 M.gsub = grammar.gsub
 
-
-
 function M.check (p)
   return core._check(grammar.compile(p))
 end
-
 
 function M.tags (p)
   return core._tags(grammar.compile(p))
 end
 
-
-
-
 function M.prog (p)
   return core._prog(grammar.compile(p))
 end
-
-
 
 function M.pmatch (p, s, i)
   return core._pmatch(grammar.compile(p), s, i)

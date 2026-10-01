@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2026 Birch Point SWE
 
 static char *tk_re_strdup (const char *s) {
   size_t n = strlen(s) + 1;
