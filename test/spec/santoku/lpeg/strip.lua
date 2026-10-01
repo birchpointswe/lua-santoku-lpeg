@@ -1137,8 +1137,8 @@ test("strip dispatcher", function ()
     assert(strip.strip("#!/bin/bash\na # c\n", "bin/deploy") == "#!/bin/bash\na\n")
     assert(strip.strip("#!/usr/bin/env bash\na # c\n", "bin/deploy") ==
       "#!/usr/bin/env bash\na\n")
-    assert(strip.strip("#!/data/data/com.termux/files/usr/bin/bash\na # c\n", "bin/x") ==
-      "#!/data/data/com.termux/files/usr/bin/bash\na\n")
+    assert(strip.strip("#!/opt/tools/usr/local/bin/bash\na # c\n", "bin/x") ==
+      "#!/opt/tools/usr/local/bin/bash\na\n")
   end)
 
   test("extensionless lua shebang routes to lua", function ()
