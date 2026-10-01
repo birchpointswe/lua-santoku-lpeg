@@ -1214,3 +1214,64 @@ test("subsequence safety on corpus shapes", function ()
   end)
 
 end)
+
+test("license_at", function ()
+
+  local lines = { "SPDX-License-Identifier: MIT", "SPDX-FileCopyrightText: 2023 Birch Point SWE" }
+
+  local function header (src, filename)
+    local text, pos = strip.license_at(src, filename, lines)
+    return src:sub(1, pos - 1) .. text .. src:sub(pos)
+  end
+
+  test("comment syntax follows the language", function ()
+    local t, p = strip.license_at("local x = 1\n", "a.lua", lines)
+    assert(t == "-- " .. lines[1] .. "\n-- " .. lines[2] .. "\n" and p == 1)
+    t = strip.license_at("int x;\n", "a.c", lines)
+    assert(t == "// " .. lines[1] .. "\n// " .. lines[2] .. "\n")
+    t = strip.license_at("a { }\n", "a.css", lines)
+    assert(t == "/* " .. lines[1] .. "\n   " .. lines[2] .. " */\n")
+    t = strip.license_at("<p>x</p>\n", "a.html", lines)
+    assert(t == "<!-- " .. lines[1] .. "\n     " .. lines[2] .. " -->\n")
+    t = strip.license_at("x: 1\n", "a.yml", lines)
+    assert(t == "# " .. lines[1] .. "\n# " .. lines[2] .. "\n")
+    t = strip.license_at("local x = 1\n", "a.tk.lua", lines)
+    assert(t == "-- " .. lines[1] .. "\n-- " .. lines[2] .. "\n")
+  end)
+
+  test("files the stripper ignores or doesn't know get no header", function ()
+    assert(strip.license_at("# title\n", "README.md", lines) == nil)
+    assert(strip.license_at("{}\n", "a.json", lines) == nil)
+    assert(strip.license_at("select 1;\n", "a.sql", lines) == nil)
+  end)
+
+  test("the header goes after a shebang and a tk directive", function ()
+    local src = "#!/bin/sh\necho a\n"
+    local _, p = strip.license_at(src, "bin/run", lines)
+    assert(p == #"#!/bin/sh\n" + 1)
+    src = "-- tk: lua\nreturn 1\n"
+    _, p = strip.license_at(src, "a.tk", lines)
+    assert(p == #"-- tk: lua\n" + 1)
+  end)
+
+  test("a header written at that position survives the stripper", function ()
+    local cases = {
+      { "local x = 1 -- gone\nreturn x\n", "a.lua", "local x = 1\nreturn x\n" },
+      { "int x; // gone\n", "a.c", "int x;\n" },
+      { "a { color: red; } /* gone */\n", "a.css", "a { color: red; }\n" },
+      { "<p>x</p> <!-- gone -->\n", "a.html", "<p>x</p>\n" },
+      { "#!/bin/sh\necho a # gone\n", "bin/run", "echo a\n" },
+      { "-- tk: lua\nreturn 1 -- gone\n", "a.tk", "return 1\n" },
+    }
+    for i = 1, #cases do
+      local src, fn, body = cases[i][1], cases[i][2], cases[i][3]
+      local with = header(src, fn)
+      local out = strip.strip(with, fn)
+      assert(out:find("SPDX-License-Identifier: MIT", 1, true), fn)
+      assert(out:find("SPDX-FileCopyrightText: 2023 Birch Point SWE", 1, true), fn)
+      assert(out:sub(-#body) == body, fn .. ": " .. out)
+      assert(strip.license_at(out, fn, lines) ~= nil, fn)
+    end
+  end)
+
+end)

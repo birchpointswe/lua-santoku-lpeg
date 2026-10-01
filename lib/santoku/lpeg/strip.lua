@@ -1082,6 +1082,51 @@ local function coverage (src, filename)
   return "checked"
 end
 
+local comment_open = {
+  lua = { "-- " },
+  c = { "// " }, h = { "// " }, cpp = { "// " }, cc = { "// " }, hpp = { "// " }, m = { "// " },
+  java = { "// " }, js = { "// " },
+  css = { "/* ", " */" },
+  html = { "<!-- ", " -->" }, htm = { "<!-- ", " -->" },
+}
+
+local function license_at (src, filename, lines)
+  local is_tk, rest = split_ext(filename)
+  local tk = tk_directive(src)
+  local lang
+  if tk then
+    lang = tk
+  elseif is_tk then
+    lang = rest
+  else
+    lang = lang_for(src, rest)
+  end
+  if not lang or not ext_map[lang] then return nil end
+  local syntax = comment_open[lang] or { "# " }
+  local pos = 1
+  if byte(src, 1) == 35 and byte(src, 2) == 33 then
+    pos = eol_at(src, 1) + 1
+  end
+  if tk then
+    local e = eol_at(src, pos)
+    if str.match(sub(src, pos, e), "tk:") then
+      pos = e + 1
+    end
+  end
+  local out = {}
+  if syntax[2] then
+    local pad = str.rep(" ", #syntax[1])
+    for i = 1, #lines do
+      out[#out + 1] = (i == 1 and syntax[1] or pad) .. lines[i] .. (i == #lines and syntax[2] or "") .. "\n"
+    end
+  else
+    for i = 1, #lines do
+      out[#out + 1] = syntax[1] .. lines[i] .. "\n"
+    end
+  end
+  return concat(out), pos
+end
+
 local function strip (src, filename)
   local is_tk, rest = split_ext(filename)
   local tk = tk_directive(src)
@@ -1118,6 +1163,7 @@ end
 return {
   strip = strip,
   coverage = coverage,
+  license_at = license_at,
   strip_lua = strip_lua,
   strip_c = strip_c,
   strip_js = strip_js,
